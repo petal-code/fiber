@@ -1,4 +1,4 @@
-# fiber <img src="man/figures/fiber_hex.png" align="right" height="200" style="float:right; height:200px;">
+# fiber <img src="man/figures/fiber_hex.png" align="left" height="200" style="float:right; height:200px;">
 
 <!-- badges: start -->
 
