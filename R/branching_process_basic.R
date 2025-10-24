@@ -74,9 +74,9 @@ branching_process_basic <- function(
     time_infection_index <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
     idx <- which(tdf$time_infection == time_infection_index & !tdf$offspring_generated)[1]
 
-    id_parent   <- tdf$id[idx]
-    t_parent    <- tdf$time_infection[idx]
-    gen_parent  <- tdf$generation[idx]
+    id_index   <- tdf$id[idx]
+    t_index    <- tdf$time_infection[idx]
+    gen_index  <- tdf$generation[idx]
     current_max <- max(tdf$id, na.rm = TRUE)
 
     ## Natural history timing
@@ -95,12 +95,12 @@ branching_process_basic <- function(
 
       if (n_off > 0) {
         new_ids   <- current_max + seq_len(n_off)
-        new_times <- t_parent + generation_time(n_off)
+        new_times <- t_index + generation_time(n_off)
 
         rows <- new_ids
         tdf[rows, "id"]             <- new_ids
-        tdf[rows, "ancestor"]       <- id_parent
-        tdf[rows, "generation"]     <- gen_parent + 1L
+        tdf[rows, "ancestor"]       <- id_index
+        tdf[rows, "generation"]     <- gen_index + 1L
         tdf[rows, "time_infection"] <- new_times
         tdf[rows, "time_onset"]     <- NA_real_
         tdf[rows, "n_offspring"]    <- NA_integer_
