@@ -1,14 +1,14 @@
 branching_process_basic <- function(
-  
+
   ## Transmission
   offspring = c("pois", "nbinom"),
   mn_offspring,
   disp_offspring,            # only used if "nbinom"
-  
+
   ## Natural history
   generation_time,
   infection_to_onset,
-  
+
   ## Misc
   t0 = 0,
   tf = Inf,
@@ -18,12 +18,14 @@ branching_process_basic <- function(
   seeding_cases,
   seed
 ) {
+
+  ## Set seed
   set.seed(seed)
-  
+
   ## Susceptibles
   susc <- population - initial_immune
-  
-  ## Offspring distribution 
+
+  ## Offspring distribution
   dist <- match.arg(offspring)
   if (dist == "pois") {
     offspring_fun <- function(n, susc) {
@@ -39,7 +41,7 @@ branching_process_basic <- function(
       truncdist::rtrunc(n, spec = "nbinom", b = susc, mu = new_mn, size = size)
     }
   } else stop("offspring specification is wrong")
-  
+
   ## Preallocate (minimal columns only)
   max_cases <- check_final_size
   tdf <- data.frame(
@@ -52,7 +54,7 @@ branching_process_basic <- function(
     offspring_generated = FALSE,
     stringsAsFactors = FALSE
   )
-  
+
   ## Seed cases
   tdf[1:seeding_cases, ] <- data.frame(
     id              = seq_len(seeding_cases),
@@ -64,37 +66,37 @@ branching_process_basic <- function(
     offspring_generated = FALSE,
     stringsAsFactors = FALSE
   )
-  
+
   ## Main expansion loop
   while ( any(is.na(tdf$n_offspring)) && susc > 0 ) {
-    
+
     ## Get earliest infection not yet expanded
     time_infection_index <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
     idx <- which(tdf$time_infection == time_infection_index & !tdf$offspring_generated)[1]
-    
+
     id_parent   <- tdf$id[idx]
     t_parent    <- tdf$time_infection[idx]
     gen_parent  <- tdf$generation[idx]
     current_max <- max(tdf$id, na.rm = TRUE)
-    
+
     ## Natural history timing
     tdf$time_onset[idx] <- infection_to_onset(1)
-    
+
     ## Draw offspring count
     n_off <- offspring_fun(1, susc)
     tdf$n_offspring[idx] <- n_off
     tdf$offspring_generated[idx] <- TRUE
-    
+
     ## If children exist, append them
     if (n_off > 0) {
       # stop if we’d exceed preallocated size
       if ((current_max + n_off) > max_cases)
         n_off <- max(0L, max_cases - current_max)
-      
+
       if (n_off > 0) {
         new_ids   <- current_max + seq_len(n_off)
         new_times <- t_parent + generation_time(n_off)
-        
+
         rows <- new_ids
         tdf[rows, "id"]             <- new_ids
         tdf[rows, "ancestor"]       <- id_parent
@@ -105,14 +107,14 @@ branching_process_basic <- function(
         tdf[rows, "offspring_generated"] <- FALSE
       }
     }
-    
+
     ## Deplete susceptibles
     susc <- susc - tdf$n_offspring[idx]
-    
+
     ## Optional: hard stop if we filled the table
     if (max(tdf$id, na.rm = TRUE) >= max_cases) break
   }
-  
+
   ## Final tidy
   tdf <- tdf[!is.na(tdf$time_infection) & tdf$time_infection <= tf, ]
   tdf <- tdf[order(tdf$time_infection, tdf$id), ]
