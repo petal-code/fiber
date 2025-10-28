@@ -1,3 +1,5 @@
+
+
 branching_process_basic <- function(
 
   ## Transmission
@@ -8,6 +10,12 @@ branching_process_basic <- function(
   ## Natural history
   generation_time,
   infection_to_onset,
+
+  ## quarantine ##
+
+  quarantine_time = 0,
+  quarantine_efficacy = 0,
+
 
   ## Misc
   t0 = 0,
@@ -68,10 +76,15 @@ branching_process_basic <- function(
   )
 
   ## Main expansion loop
-  while ( any(is.na(tdf$n_offspring)) && susc > 0 ) {
+  while ( any(!tdf$offspring_generated & !is.na(tdf$time_infection)) ) {
+
 
     ## Get earliest infection not yet expanded
     time_infection_index <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
+
+    # If no further infections to expand, stop
+    if (is.infinite(time_infection_index)) break
+
     idx <- which(tdf$time_infection == time_infection_index & !tdf$offspring_generated)[1]
 
     id_index   <- tdf$id[idx]
@@ -80,29 +93,61 @@ branching_process_basic <- function(
     current_max <- max(tdf$id, na.rm = TRUE)
 
     ## Natural history timing
-    tdf$time_onset[idx] <- infection_to_onset(1)
+
+    onset_rel <- infection_to_onset(1)
+    tdf$time_onset[idx] <- t_index + onset_rel
 
     ## Draw offspring count
     n_off <- offspring_fun(1, susc)
     tdf$n_offspring[idx] <- n_off
     tdf$offspring_generated[idx] <- TRUE
 
+
+
+    ### Quarantine comes in here ###
+
+    if (n_off > 0 && quarantine_efficacy > 0) {
+
+      # relative infection times for children
+      child_rel_times <- generation_time(n_off)
+
+      qres <- implement_quarantine(
+        symptom_onset_time        = onset_rel,
+        quarantine_time           = quarantine_time,
+        n_offspring               = n_off,
+        offspring_infection_times = child_rel_times,
+        offspring_function_draw   = NULL,
+        quarantine_efficacy       = quarantine_efficacy
+      )
+
+      # update n_off and timing after quarantine
+      n_off <- qres$updated_n_offspring
+      child_rel_times <- qres$updated_infection_times
+    }
+
+    # If quarantine is off, generate child infection times now
+    if (n_off > 0 && (!exists("child_rel_times") || length(child_rel_times) == 0)) {
+      child_rel_times <- generation_time(n_off)
+    }
+
     ## If children exist, append them
     if (n_off > 0) {
       # stop if we’d exceed preallocated size
       if ((current_max + n_off) > max_cases)
         n_off <- max(0L, max_cases - current_max)
+      child_rel_times <- child_rel_times[seq_len(n_off)]
 
       if (n_off > 0) {
         new_ids   <- current_max + seq_len(n_off)
-        new_times <- t_index + generation_time(n_off)
+        new_times <- t_index + child_rel_times
+
 
         rows <- new_ids
         tdf[rows, "id"]             <- new_ids
         tdf[rows, "ancestor"]       <- id_index
         tdf[rows, "generation"]     <- gen_index + 1L
         tdf[rows, "time_infection"] <- new_times
-        tdf[rows, "time_onset"]     <- NA_real_
+        tdf[rows, "time_onset"] <- t_index + infection_to_onset(n_off)
         tdf[rows, "n_offspring"]    <- NA_integer_
         tdf[rows, "offspring_generated"] <- FALSE
       }
