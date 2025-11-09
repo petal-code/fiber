@@ -1,0 +1,79 @@
+offspring_function_genPop <- function(
+
+  ## Characteristics and properties of the parent (who we are generating the offspring for)
+  parent_hospitalised = NULL,               # whether the parent (infector) is hospitalised or not
+  parent_time_to_hospitalisation = NULL,    # if parent is hospitalised, the time of hospitalisation (relative to infection)
+  parent_time_to_outcome = NULL,            # the time when the parent dies/recovers (relative to time of infection)
+
+  ## Parameters of the offspring and generation time distributions for general population (genPop)
+  mn_offspring_genPop = NULL,
+  overdisp_offspring_genPop = NULL,
+  Tg_shape_genPop = NULL,
+  Tg_rate_genPop = NULL,
+  hospital_quarantine_efficacy = NULL,
+
+  ## Probabilities for genPop infecting either genPop or HCWs, depending on the setting
+  prob_hcw_cond_genPop_comm = NULL,
+  prob_hcw_cond_genPop_hospital = NULL
+) {
+
+  #########################################################################################
+  ## Checks to make sure function inputs are correctly specified
+  #########################################################################################
+  if (is.null(parent_hospitalised) || length(parent_hospitalised) != 1L || !is.logical(parent_hospitalised) || is.na(parent_hospitalised)) {
+    stop("`parent_hospitalised` must be a single logical value: TRUE or FALSE.", call. = FALSE)
+  }
+  if (isTRUE(parent_hospitalised)) {
+    if (is.null(parent_time_to_hospitalisation) || length(parent_time_to_hospitalisation) != 1L ||
+        !is.numeric(parent_time_to_hospitalisation) || is.na(parent_time_to_hospitalisation) || parent_time_to_hospitalisation < 0) {
+      stop("When `parent_hospitalised` is TRUE, `parent_time_to_hospitalisation` must be a single non-negative numeric value (not NA).", call. = FALSE)
+    }
+  }
+  if (is.null(parent_time_to_outcome) || length(parent_time_to_outcome) != 1L ||
+      !is.numeric(parent_time_to_outcome) || is.na(parent_time_to_outcome) || parent_time_to_outcome < 0) {
+    stop("`parent_time_to_outcome` must be a single non-negative numeric value (not NA).", call. = FALSE)
+  }
+  if (identical(parent_hospitalised, FALSE)) {
+    if (!is.na(parent_time_to_hospitalisation)) {
+      stop("When `parent_hospitalised` is FALSE, `parent_time_to_hospitalisation` must be NA.", call. = FALSE)
+    }
+  }
+
+  ########################################################################################################
+  ## Generating offspring, offspring infection times, offspring infection locations & offspring classes
+  ########################################################################################################
+
+  # Step 1: Draw from offspring distribution to produce raw number of offspring
+  num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_genPop, size = overdisp_offspring_genPop)
+
+  # Step 2: Generate time of infection for each offspring based on the generation time
+  infection_times <- rtrunc_gamma(n = num_offspring_raw, lower = 0, upper = parent_time_to_outcome, Tg_shape = Tg_shape_genPop, Tg_rate = Tg_rate_genPop)
+
+  # Step 3: Generate location of infection depending on i) whether parent is hospitalised and ii) if hospitalised, the time
+  #         of hospitalisation relative to time of infection
+  t_hosp <- if (isTRUE(parent_hospitalised)) parent_time_to_hospitalisation else Inf
+  if (is.finite(t_hosp) && parent_time_to_outcome <= t_hosp) t_hosp <- Inf
+  infection_settings <- ifelse(infection_times < t_hosp, "community", "hospital")
+
+  # Step 4: Thin / remove some hospital infections due to quarantining effect / similar
+  p_keep_infection <- ifelse(infection_settings == "community", 1, 1 - hospital_quarantine_efficacy)
+  keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
+  infection_times <- infection_times[keep_infection]
+  infection_settings <- infection_settings[keep_infection]
+  num_offspring_quarantine <- sum(keep_infection)
+
+  # Step 5: Assign class (HCW or genPop) to each offspring based on i) identity of parent and ii) location of infection
+  offspring_class <- rep("genPop", length(infection_times))
+  prob_hcw <- ifelse(infection_settings == "community", prob_hcw_cond_genPop_comm, prob_hcw_cond_genPop_hospital)
+  flip_hcw <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hcw))
+  offspring_class[flip_hcw] <- "HCW"
+
+  # Step 6: Define and output dataframe with the results
+  offspring_df <- data.frame(id = seq_len(num_offspring_quarantine),
+                             parent_class = rep("genPop", length(infection_times)),
+                             setting = infection_settings,
+                             time_infection = infection_times,
+                             class = offspring_class,
+                             stringsAsFactors = FALSE)
+  return(offspring_df)
+}
