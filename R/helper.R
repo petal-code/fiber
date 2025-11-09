@@ -1,6 +1,6 @@
-rtrunc_via_cdf <- function(n, lower = -Inf, upper = Inf, tg_shape, tg_rate) {
-  pfun <- function(x) pgamma(x, shape = tg_shape, rate = tg_rate)
-  qfun <- function(p) qgamma(p, shape = tg_shape, rate = tg_rate)
+rtrunc_gamma <- function(n, lower = -Inf, upper = Inf, Tg_shape, Tg_rate) {
+  pfun <- function(x) pgamma(x, shape = Tg_shape, rate = Tg_rate)
+  qfun <- function(p) qgamma(p, shape = Tg_shape, rate = Tg_rate)
   a <- if (is.finite(lower)) pfun(lower) else 0
   b <- if (is.finite(upper)) pfun(upper) else 1
   if (b <= a) {
