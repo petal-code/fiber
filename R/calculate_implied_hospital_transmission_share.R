@@ -64,12 +64,12 @@
 #'
 #' @export
 calculate_implied_hospital_transmission_share <- function(
-    p_hosp,
+    p_hosp,                   # probability of an infection going to hospital
     shape_h, rate_h,          # time to hospitalisation ~ Gamma(shape_h, rate_h)
     shape_out, rate_out,      # time to outcome        ~ Gamma(shape_out, rate_out)
     gt_shape, gt_rate,        # generation time        ~ Gamma(gt_shape, gt_rate)
-    kappa = 1,                # hospital keep-prob (scalar or vector in [0,1])
-    n = 20000,                # Monte Carlo draws
+    kappa = 1,                # hospital keep-prob (scalar or vector in [0,1]) - to reflect reduced transmission in hospitals (quarantine)
+    n = 20000,                # Monte Carlo draws to assess fraction hospital transmission
     seed = NULL               # optional reproducibility
 ) {
   ## ---------------------------
