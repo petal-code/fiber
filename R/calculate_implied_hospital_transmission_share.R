@@ -117,7 +117,8 @@ calculate_implied_hospital_transmission_share <- function(
   qc <- ifelse(
     !is.finite(t_hosp) | F_out <= 0,
     1,
-    pmin(pmax(pgamma(t_hosp, shape = gt_shape, rate = gt_rate) / F_out, 0), 1)
+    # pgamma call calculates fraction of Tg probability mass that lies before admission relative to all mass before outcome
+    pmin(pmax(pgamma(t_hosp, shape = gt_shape, rate = gt_rate) / F_out, 0), 1) # p_min and p_max to ensure [0, 1]
   )
   qh <- 1 - qc  # post-admission mass fraction
 
