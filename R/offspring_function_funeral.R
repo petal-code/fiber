@@ -35,6 +35,9 @@
 #' @param Tg_shape_funeral Positive numeric. Shape of Gamma delay distribution
 #'   for time from outcome to funeral infections.
 #' @param Tg_rate_funeral Positive numeric. Rate of Gamma delay distribution. ## mean GT = shape/rate
+#' @param safe_funeral_efficacy numeric in [0,1]. Efficacy in preventing transmission at a safe funeral where 1 = perfect efficacy/
+#' no onward transmission; 0 = no efficacy (equivalent to an unsafe funeral). Acts as a thinning parameter,
+#' reducing number of offspring generated.
 #'
 #' @param prob_hcw_cond_funeral Numeric in [0,1]. Probability a funeral infection
 #'   is an HCW.
@@ -64,6 +67,9 @@ offspring_function_funeral <- function(
   ## Timing of funeral infections (delay after outcome)
   Tg_shape_funeral = NULL, # gamma shape parameter for Tg distribution at funerals ### have high shape, high rate to get low variance ##
   Tg_rate_funeral = NULL,  #gamma rate parameter for Tg distribution at funerals
+
+  ### efficacy of a safe funeral (thinning funeral offspring)
+  safe_funeral_efficacy = NULL, ## efficacy of a safe burial in reducing transmission in a funeral setting
 
   ## HCW vs genPop at funeral
   prob_hcw_cond_funeral = NULL ### probability that the unsafe funeral infector infects a HCW
@@ -111,6 +117,11 @@ offspring_function_funeral <- function(
       stop(sprintf("`%s` must be a numeric scalar in [0, 1].", nm), call. = FALSE)
   }
 
+ # safe funeral efficacy
+  if (is.null(safe_funeral_efficacy) || !is.numeric(safe_funeral_efficacy) ||
+      safe_funeral_efficacy < 0 || safe_funeral_efficacy > 1)
+    stop("`safe_funeral_efficacy` must be between 0 and 1.", call. = FALSE)
+
 
   # Other positive parameters
   for (nm in c("mn_offspring_funeral", "overdisp_offspring_funeral",
@@ -127,7 +138,7 @@ offspring_function_funeral <- function(
 
 
   #########################################################################################
-  ## Logic for whether an unsafe funeral is possible
+  ## Logic for whether a safe or unsafe funeral occurs
   #########################################################################################
   # step 1, ensure parent is dead
   # If parent survived, no funeral transmission
@@ -150,10 +161,10 @@ offspring_function_funeral <- function(
 
 
   if (!has_unsafe_funeral) {
-    # Funeral was safe = always no funeral transmission
-    return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
-                      time_infection=numeric(0), class=character(0), stringsAsFactors=FALSE))
+    # Funeral was safe — thinning offspring mean according to efficacy
+    mn_offspring_funeral <- mn_offspring_funeral * (1 - safe_funeral_efficacy)
   }
+
 
 
   #########################################################################################
