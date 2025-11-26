@@ -115,7 +115,7 @@ offspring_function_funeral <- function(
   }
 
   # p_unsafe_funeral_comm/hosp
-  for (nm in c("p_unsafe_funeral_comm", "p_unsafe_funeral_hosp")) {
+  for (nm in c("p_unsafe_funeral_comm_hcw", "p_unsafe_funeral_hosp_hcw", "p_unsafe_funeral_comm_genPop", "p_unsafe_funeral_hosp_genPop")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1)
       stop(sprintf("`%s` must be a numeric scalar in [0, 1].", nm), call. = FALSE)
@@ -135,10 +135,15 @@ offspring_function_funeral <- function(
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
   }
 
-  if (is.null(prob_hcw_cond_funeral) || !is.numeric(prob_hcw_cond_funeral) ||
-      length(prob_hcw_cond_funeral) != 1L || is.na(prob_hcw_cond_funeral) ||
-      prob_hcw_cond_funeral < 0 || prob_hcw_cond_funeral > 1)
-    stop("`prob_hcw_cond_funeral` must be in [0, 1].", call. = FALSE)
+  if (is.null(prob_hcw_cond_funeral_hcw) || !is.numeric(prob_hcw_cond_funeral_hcw) ||
+      length(prob_hcw_cond_funeral_hcw) != 1L || is.na(prob_hcw_cond_funeral_hcw) ||
+      prob_hcw_cond_funeral_hcw < 0 || prob_hcw_cond_funeral_hcw > 1)
+    stop("`prob_hcw_cond_funeral_hcw` must be in [0, 1].", call. = FALSE)
+
+  if (is.null(prob_hcw_cond_funeral_genPop) || !is.numeric(prob_hcw_cond_funeral_genPop) ||
+      length(prob_hcw_cond_funeral_genPop) != 1L || is.na(prob_hcw_cond_funeral_genPop) ||
+      prob_hcw_cond_funeral_genPop < 0 || prob_hcw_cond_funeral_genPop > 1)
+    stop("`prob_hcw_cond_funeral_genPop` must be in [0, 1].", call. = FALSE)
 
 
   #########################################################################################
@@ -179,6 +184,8 @@ offspring_function_funeral <- function(
   if (!has_unsafe_funeral) {
     keep_infection <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = 1 - safe_funeral_efficacy))
     num_offspring <- sum(keep_infection)
+  } else {
+    num_offspring <- num_offspring_raw
   }
 
   if (num_offspring == 0L) {
