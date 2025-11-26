@@ -95,7 +95,7 @@ offspring_function_hcw <- function(
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val <= 0)
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
   }
-  for (nm in c("prob_hospital_cond_hcw_preAdm","ppe_efficacy_worker","hospital_quarantine_efficacy",
+  for (nm in c("prob_hospital_cond_hcw_preAdm","ppe_efficacy_hcw","hospital_quarantine_efficacy",
                "prob_hcw_cond_hcw_comm","prob_hcw_cond_hcw_hospital")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1)
@@ -121,7 +121,7 @@ offspring_function_hcw <- function(
   infection_settings <- ifelse(pre_admission, ifelse(is_hosp_pre_admission, "hospital", "community"), "hospital")
 
   # Step 4: Thin / remove some hospital infections due to PPE (pre-hospitalisation) or quarantine (post-hospitalisation)
-  p_keep_infection <- ifelse(infection_settings == "community", 1, ifelse(pre_admission, 1 - ppe_efficacy_worker, 1 - hospital_quarantine_efficacy))
+  p_keep_infection <- ifelse(infection_settings == "community", 1, ifelse(pre_admission, 1 - ppe_efficacy_hcw, 1 - hospital_quarantine_efficacy))
   keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
   infection_times <- infection_times[keep_infection]
   infection_settings <- infection_settings[keep_infection]
