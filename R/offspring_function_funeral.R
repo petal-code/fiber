@@ -22,11 +22,14 @@
 #'
 #' @param parent_class Character scalar, either "genPop" or "HCW". Class of the parent.
 #'
-#' @param p_unsafe_funeral_comm Numeric in [0,1]. Probability that a **community** death leads
+#' @param p_unsafe_funeral_comm_hcw Numeric in [0,1]. Probability that a **community** death of a HCW leads
 #'   to an unsafe funeral.
-#' @param p_unsafe_funeral_hosp Numeric in [0,1]. Probability that a **hospital** death leads
+#' @param p_unsafe_funeral_hosp_hcw Numeric in [0,1]. Probability that a **hospital** death of a HCW  leads
 #'   to an unsafe funeral (may be small but non-zero for completeness).
-
+#' @param p_unsafe_funeral_comm_genPop Numeric in [0,1]. Probability that a **community** death of a genPop leads
+#'   to an unsafe funeral.
+#' @param p_unsafe_funeral_hosp_genPop Numeric in [0,1]. Probability that a **hospital** death of a genPop leads
+#'   to an unsafe funeral (may be small but non-zero for completeness).
 #'
 #' @param mn_offspring_funeral Positive numeric. Mean of NB distribution for number
 #'   of offspring at an unsafe funeral.
