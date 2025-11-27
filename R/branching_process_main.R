@@ -4,6 +4,10 @@
 ## functional inside a package
 
 ## Note: need to add descriptions of each of the function inputs, which are currently missing
+## Note: currently the code has a mixture of distribution parameter inputs (e.g. generation time) and others
+##       where there are actual parameters of the distribution inputs (e.g. Tg_shape_funeral and Tg_rate_funeral)
+##       we should harmonise this at some point
+## Note: we might make a function called "generate_seeding_case_attributes" or something that does everything that we do in step 2 currently
 
 branching_process_main <- function(
 
@@ -12,8 +16,16 @@ branching_process_main <- function(
   disp_offspring= NULL,            # only used if "nbinom"
 
   ## Natural history
-  generation_time,                 # DESCRIPTION HERE
+  generation_time,                 # DESCRIPTION HERE ## NOTE: CHARLIE NEEDS TO RECONCILE FACT THAT OFFSPRING FUNCTION HAS TG_SHAPE AND TG_RATE VS GENERATION TIME HERE
   infection_to_onset,              # DESCRIPTION HERE
+  infection_to_hospitalisation,
+  prob_symptomatic = NULL,
+  prob_hospitalised_hcw = NULL,
+  prob_hospitalised_genPop = NULL,
+  prob_death_comm = NULL,
+  prob_death_hosp = NULL,
+  infection_to_death = NULL,       # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
+  infection_to_recovery = NULL,    # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
 
   ## Parameters of the offspring and generation time distributions for general population (genPop)
   mn_offspring_genPop = NULL,               # mean of the offspring distribution for general population
@@ -42,8 +54,10 @@ branching_process_main <- function(
   hospital_quarantine_efficacy = NULL,      # efficacy of quarantine at reducing transmission (i.e. post hospitalisation)
 
   ## Funeral occurrence
-  p_unsafe_funeral_comm = NULL, ## probability the parent had an unsafe funeral Cond. on a community death
-  p_unsafe_funeral_hosp = NULL, ## probability parent had an unsafe funeral cond. on a hospital death
+  p_unsafe_funeral_comm_hcw = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being HCW
+  p_unsafe_funeral_hosp_hcw = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being HCW
+  p_unsafe_funeral_comm_genPop = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being genPop
+  p_unsafe_funeral_hosp_genPop = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being genPop
 
   ## Offspring distribution for unsafe funeral event
   mn_offspring_funeral = NULL, # mean number of offspring at unsafe funeral
@@ -53,20 +67,27 @@ branching_process_main <- function(
   Tg_shape_funeral = NULL, # gamma shape parameter for Tg distribution at funerals ### have high shape, high rate to get low variance ##
   Tg_rate_funeral = NULL,  #gamma rate parameter for Tg distribution at funerals
 
-  ## HCW vs genPop at funeral ## NOTE- THIS NEEDS TO BE TWO INPUTS BASED ON WHETHER INFECTOR IS HCW OR GENPOP - JACOB STILL ADDING
-  prob_hcw_cond_funeral = NULL, ### probability that the unsafe funeral infector infects a HCW
+  ### efficacy of a safe funeral (thinning funeral offspring)
+  safe_funeral_efficacy = NULL, ## efficacy of a safe burial in reducing transmission in a funeral setting
+
+  ## HCW vs genPop at funeral
+  prob_hcw_cond_funeral_hcw = NULL, ### probability that the unsafe funeral infector infects a HCW
+  prob_hcw_cond_funeral_genPop = NULL, ## DESCRIPTION NEEDED HERE
 
   ## Misc
-  t0 = 0,
   tf = Inf,
   population,
   check_final_size,
   initial_immune = 0,
   seeding_cases,
   seed
+
 ) {
 
-  ## Set seed for reproducibility
+  ##################################################################
+  ### Step 1: Set up everything we need for the simulation
+  ##################################################################
+  # Set seed for reproducibility
   set.seed(seed)
 
   ## Initialise the susceptible population
@@ -93,89 +114,204 @@ branching_process_main <- function(
     generation                   = integer(max_cases),   # generation of the infected individual i.e. how many infections precede them in the transmission chain
     time_infection_relative      = NA_real_,             # time of the infection relative to the parent
     time_infection_absolute      = NA_real_,             # time of the infection in absolute calendar time (i.e. since start of outbreak)
-
     symptomatic                  = NA,                   # are they symptomatic?
     time_symptom_onset_relative  = NA_real_,             # time of symptom onset relative to the parent
     time_symptom_onset_absolute  = NA_real_,             # time of symptom onset in absolute calendar time (i.e. since start of outbreak)
-
-    hospitalisation              = ,
-    time_hospitalisation_relative        = ,
-    time_hospitalisation_absolute        = ,
-
+    hospitalisation              = FALSE,
+    time_hospitalisation_relative  = NA_real_,
+    time_hospitalisation_absolute  = NA_real_,
     outcome                      = NA_character_,         # what the outcome is for that individual
-    time_outcome_relative        = ,
-    time_outcome_absolute        = ,
-
+    time_outcome_relative        = NA_real_,
+    time_outcome_absolute        = NA_real_,
     funeral_safety               = NA_character_,
-    time_funeral_relative        = ,
-    time_funeral_absolute        = ,
-
+    time_funeral_relative        = NA_real_,
+    time_funeral_absolute        = NA_real_,
     n_offspring                  = integer(max_cases),
     offspring_generated           = FALSE,
     stringsAsFactors = FALSE
   )
 
-  ## Seed cases
+  #########################################################################
+  ### Step 2: Initialise conditions and features of the seeding cases
+  #########################################################################
+
+  ## Deciding whether the seeding cases are symptomatic, and if so, when they develop symptoms
+  seeding_cases_symptomatic <- as.logical(rbinom(n = seeding_cases, size = 1, prob = prob_symptomatic))
+  seeding_cases_symptom_onset <- rep(NA_real_, seeding_cases)
+  seeding_cases_symptom_onset[seeding_cases_symptomatic] <- infection_to_onset(n = sum(seeding_cases_symptomatic))
+
+  ## Deciding on the outcome for the seeding cases, and if so, when that outcome occurs
+  seeding_cases_outcome <- as.logical(rbinom(n = seeding_cases, size = 1, prob = prob_death))
+  seeding_cases_outcome_time <- rep(NA_real_, seeding_cases)
+  seeding_cases_outcome_time[seeding_cases_outcome] <- infection_to_death(n = sum(seeding_cases_outcome))
+  seeding_cases_outcome_time[!seeding_cases_outcome] <- infection_to_recovery(n = sum(!seeding_cases_outcome))
+
+  ## Deciding on the times of funerals for dead individuals (all of whom are assumed to have unsafe funerals)
+  seeding_cases_funeral_safety <- rep("unsafe", seeding_cases)
+  seeding_cases_funeral_time <- rep(NA_real_, seeding_cases)
+  seeding_cases_funeral_time[seeding_cases_outcome] <- rgamma(n = sum(seeding_cases_outcome), shape = Tg_shape_funeral, rate  = Tg_rate_funeral)
+
+  ## Initialising the dataframe with the seed cases and their attributes
   tdf[1:seeding_cases, ] <- data.frame(
-    id              = seq_len(seeding_cases),
-    ancestor        = NA_integer_,
-    generation      = 1L,
-    time_infection  = t0 + seq(from = 0, to = 0.01, length.out = seeding_cases),
-    time_onset      = NA_real_,
-    n_offspring     = NA_integer_,
-    offspring_generated = FALSE,
+    id                           = seq_len(seeding_cases),
+    class                        = rep("genPop", seeding_cases),
+    parent                       = NA_character_,
+    parent_class                 = NA_character_,
+    generation                   = 1,
+    time_infection_relative      = seq(from = 0, to = 0.01, length.out = seeding_cases),
+    time_infection_absolute      = seq(from = 0, to = 0.01, length.out = seeding_cases),
+    symptomatic                  = seeding_cases_symptomatic,
+    time_symptom_onset_relative  = seeding_cases_symptom_onset,
+    time_symptom_onset_absolute  = seeding_cases_symptom_onset,
+    hospitalisation              = rep(FALSE, seeding_cases),
+    time_hospitalisation_relative  = NA_real_,
+    time_hospitalisation_absolute  = NA_real_,
+    outcome                      = seeding_cases_outcome,
+    time_outcome_relative        = seeding_cases_outcome_time,
+    time_outcome_absolute        = seeding_cases_outcome_time,
+    funeral_safety               = seeding_cases_funeral_safety,
+    time_funeral_relative        = seeding_cases_funeral_time,
+    time_funeral_absolute        = seeding_cases_funeral_time,
+    n_offspring                  = NA_integer_,
+    offspring_generated          = FALSE,
     stringsAsFactors = FALSE
   )
 
-  ## Main expansion loop
-  while ( any(is.na(tdf$n_offspring)) && susc > 0 ) {
+  #################################################################################
+  ### Step 3: Loop through infections and generate offspring for each of them
+  #################################################################################
+  ## While we haven't hit the simulation cap size (check_final_size) and any infections exist where we have not yet generated the requisite offspring,
+  ## continue to generate infections
+  while (any(is.na(tdf$n_offspring)) && susc > 0 && nrow(tdf) <= check_final_size) {
 
-    ## Get earliest infection not yet expanded
-    time_infection_index <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
+    #############################################################################################
+    ## Step 1: Get earliest infection not yet expanded to act as a parent, and their attributes
+    #############################################################################################
+    ## note: call these "parent" rather than "index
+
+    parent_time_infection <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
     idx <- which(tdf$time_infection == time_infection_index & !tdf$offspring_generated)[1]
+    parent_id   <- tdf$id[idx]
+    parent_generation  <- tdf$generation[idx]
 
-    id_index   <- tdf$id[idx]
-    t_index    <- tdf$time_infection[idx]
-    gen_index  <- tdf$generation[idx]
+    parent_symptomatic <- rbinom(n = 1, size = 1, prob = prob_symptomatic)
+    if (parent_class == "genPop") {
+      parent_hospitalised <- ifelse(parent_symptomatic, rbinom(n = 1, size = 1, prob = prob_hospitalised_genPop), NA)
+    } else if (parent_class  == "HCW") {
+      parent_hospitalised <- ifelse(parent_symptomatic, rbinom(n = 1, size = 1, prob = prob_hospitalised_hcw), NA)
+    }
+    parent_time_to_hospitalisation <- ifelse(parent_hospitalised, infection_to_hospitalisation(n = 1), NA)
+
+    if (parent_hospitalisation == TRUE) {
+      parent_outcome <- rbinom(n = 1, size = 1, prob = prob_death_hosp)
+    } else if (parent_hospitalisation == FALSE) {
+      parent_outcome <- rbinom(n = 1, size = 1, prob = prob_death_comm)
+    }
+
+    ## Note: we should change the function so that 1s/0s of parent outcome are characters i.e. "death" / "recovery" explicitly
+    ## Note: general note that we should be actively thinking about how to ensure we don't end up in weird edge cases where all
+    ##       of our infections end up dying or recovering before they even need healthcare. that'll require us to be careful with how
+    ##       we approach parameterising this (maybe we put a check in place??)
+    if (parent_outcome == TRUE) { ## if they died
+      parent_time_to_outcome <- infection_to_death(n = 1)
+    } else if (parent_outcome == FALSE) { ## if they recovered
+      parent_time_to_outcome <- infection_to_recovery(n = 1)
+    }
+
     current_max <- max(tdf$id, na.rm = TRUE)
-
-    ## Natural history timing
     tdf$time_onset[idx] <- infection_to_onset(1)
 
-    ## Draw offspring count
-    ## Note: This is just an example, but imagine I'm not sure that offspring function is working correctly;
-    ##        I'll make a note to return to this with something like "I think something weird is going on when
-    ##       maybe they're a healthcare worker?"
-    n_off <- offspring_fun(1, susc)
-    tdf$n_offspring[idx] <- n_off
-    tdf$offspring_generated[idx] <- TRUE
+    ## Update overall df with the new parent data
+    tdf$symptomatic[idx] <- parent_symptomatic
+    tdf$hospitalised[idx] <- parent_hospitalised
+    ## need to do symptom onset times here
+    tdf$time_hospitalisation_relative[idx] <- parent_time_to_hospitalisation
+    tdf$time_hospitalisation_absolute[idx] <- ________
+    ## need to do the absolute here
+    tdf$outcome[idx] <- parent_outcome
+    tdf$time_outcome_relative[idx] <- parent_time_to_outcome
+    tdf$time_outcome_absolute[idx] <- ________
+
+    ###################################################################################################################
+    ### Step 2: Generate offspring associated with community and (if hospitalised) healthcare associated transmission
+    ###################################################################################################################
+    if (parent_class == "genPop") {
+      offspring_community_healthcare_df <- offspring_function_genPop(parent_hospitalised = parent_hospitalised,
+                                                                     parent_time_to_hospitalisation = parent_time_to_hospitalisation,
+                                                                     parent_time_to_outcome = parent_time_to_outcome,
+                                                                     mn_offspring_genPop = mn_offspring_genPop,
+                                                                     overdisp_offspring_genPop = overdisp_offspring_genPop,
+                                                                     Tg_shape_genPop = Tg_shape_genPop,
+                                                                     Tg_rate_genPop = Tg_rate_genPop,
+                                                                     hospital_quarantine_efficacy = hospital_quarantine_efficacy,
+                                                                     prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
+                                                                     prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
+    } else if (parent_class == "HCW") {
+      offspring_community_healthcare_df <- offspring_function_hcw(parent_hospitalised = parent_hospitalised,
+                                                                  parent_time_to_hospitalisation = parent_time_to_hospitalisation,
+                                                                  parent_time_to_outcome = parent_time_to_outcome,
+                                                                  mn_offspring_hcw = mn_offspring_hcw,
+                                                                  overdisp_offspring_hcw = overdisp_offspring_hcw,
+                                                                  Tg_shape_hcw = Tg_shape_hcw,
+                                                                  Tg_rate_hcw = Tg_rate_hcw,
+                                                                  prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
+                                                                  ppe_efficacy_hcw = ppe_efficacy_hcw,
+                                                                  hospital_quarantine_efficacy = hospital_quarantine_efficacy,
+                                                                  prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
+                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital
+      )
+    } else {
+      stop("Unknown parent class")
+    }
+
+    #############################################################################################
+    ### Step 3: Generate offspring associated with funeral transmission
+    #############################################################################################
+    offspring_funeral_df <- offspring_function_funeral(parent_hospitalised = parent_hospitalised,
+                                                       parent_time_to_hospitalisation = parent_time_to_hospitalisation,
+                                                       parent_time_to_outcome = parent_time_to_outcome,
+                                                       parent_died = parent_died,
+                                                       parent_class = parent_class,
+                                                       p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
+                                                       p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
+                                                       p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+                                                       p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+                                                       mn_offspring_funeral = mn_offspring_funeral,
+                                                       overdisp_offspring_funeral = overdisp_offspring_funeral,
+                                                       Tg_shape_funeral = Tg_shape_funeral,
+                                                       Tg_rate_funeral = Tg_rate_funeral,
+                                                       safe_funeral_efficacy = safe_funeral_efficacy,
+                                                       prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
+                                                       prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
+
+    ## Note: we need to either 1) generate all of the information for each offspring when we simulate them, OR we need to return
+    ##       this info as part of the function call
+    ## this is important - we need to update tdf with the parent relative to these things:
+    funeral_safety               = NA_character_,
+    time_funeral_relative        = NA_real_,
+    time_funeral_absolute        = NA_real_,
+    ## but we only know these things once we've run the offspring function. Maybe that info needs to be returned alongside the dataframe
+
+
+    #################################################################################################################
+    ### Step 4: Update parent attributes based on the results of this (e.g. num offspring produced etc)
+    #################################################################################################################
+    ### add in some code that updates columns in the row in the dataframe corresponding to the parent to reflect
+    ### the fact that we've now done stuff for them
+
+    #################################################################################################################
+    ### Step 5: Combine the separate transmission associated dataframes together and add them to the main dataframe
+    #################################################################################################################
+    overall_offspring_df <- rbind(offspring_community_healthcare_df, offspring_funeral_df)
 
     ## If children exist, append them
-    if (n_off > 0) {
-      # stop if we’d exceed preallocated size
-      if ((current_max + n_off) > max_cases)
-        n_off <- max(0L, max_cases - current_max)
-
-      if (n_off > 0) {
-        new_ids   <- current_max + seq_len(n_off)
-        new_times <- t_index + generation_time(n_off)
-
-        rows <- new_ids
-        tdf[rows, "id"]             <- new_ids
-        tdf[rows, "ancestor"]       <- id_index
-        tdf[rows, "generation"]     <- gen_index + 1L
-        tdf[rows, "time_infection"] <- new_times
-        tdf[rows, "time_onset"]     <- NA_real_
-        tdf[rows, "n_offspring"]    <- NA_integer_
-        tdf[rows, "offspring_generated"] <- FALSE
-      }
+    if (nrow(overall_offspring_df) > 0) {
+      tdf[(index + 1):(index + 1 + nrow(overall_offspring_df))] <- overall_offspring_df
     }
 
     ## Deplete susceptibles
     susc <- susc - tdf$n_offspring[idx]
 
-    ## Optional: hard stop if we filled the table
-    if (max(tdf$id, na.rm = TRUE) >= max_cases) break
   }
 
   ## Final tidy
