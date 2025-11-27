@@ -50,6 +50,25 @@
 #'   Returns a 0-row data.frame if no unsafe funeral occurs or zero offspring.
 #' @export
 
+parent_hospitalised = TRUE
+parent_time_to_hospitalisation = 10
+parent_time_to_outcome = 15
+parent_died = TRUE
+parent_class = "genPop"
+p_unsafe_funeral_comm_hcw = 0.5
+p_unsafe_funeral_hosp_hcw = 0.5
+p_unsafe_funeral_comm_genPop = 0.5
+p_unsafe_funeral_hosp_genPop = 0.5
+mn_offspring_funeral = 10
+overdisp_offspring_funeral = 10
+Tg_shape_funeral = 10
+Tg_rate_funeral = 2
+safe_funeral_efficacy = 0.25
+prob_hcw_cond_funeral_hcw = 0.5
+prob_hcw_cond_funeral_genPop = 0.5
+prob_symptomatic = 0.5
+infection_to_onset <- function(n) { rgamma(n = n, shape = 4, rate = 2)}
+
 offspring_function_funeral <- function(
 
   ## *Parent* characteristics and properties
@@ -195,9 +214,7 @@ offspring_function_funeral <- function(
 
   # Step 6: Generate infection times = outcome time + Gamma distributed 'delay', typically with
   #         little variance to represent a singular point from which infections arose
-  delay_funeral <- rgamma(n = num_offspring,
-                          shape = Tg_shape_funeral,
-                          rate  = Tg_rate_funeral)
+  delay_funeral <- rgamma(n = num_offspring, shape = Tg_shape_funeral, rate  = Tg_rate_funeral)
   infection_times <- parent_time_to_outcome + delay_funeral
 
   # Step 7: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
@@ -214,15 +231,51 @@ offspring_function_funeral <- function(
     stop("Step 7 of funeral offspring function is broken")
   }
 
-  ## Step 8: Output dataframe
+  # ## Step 8: Assigning symptom status, hospitalisation and outcome status
+  # ## Deciding whether the offspring cases are symptomatic, and if so, when they develop symptoms
+  # offspring_cases_symptomatic <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_symptomatic))
+  # offspring_cases_symptom_onset <- rep(NA_real_, num_offspring)
+  # offspring_cases_symptom_onset[offspring_cases_symptomatic] <- infection_to_onset(n = sum(offspring_cases_symptomatic))
+  #
+  # ## Deciding on the hospitalisation status for the offspring cases, and if so, when that outcome occurs
+  # ## Note: at a later date, we need to ensure we're capturing the fact that only symptomatic people will die (i.e. correlated outcomes)
+  # prob_hosp <- ifelse(offspring_class == "hcw", prob_hospitalised_hcw, prob_hospitalised_genPop)
+  # offspring_cases_hospitalised <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hosp))
+  # offspring_cases_hospitalised_time <- rep(NA_real_, num_offspring)
+  # offspring_cases_hospitalised_time[offspring_cases_hospitalised] <- infection_to_hospitalisation(n = sum(offspring_cases_hospitalised))
+  #
+  # ## Deciding on the outcome for the offspring cases, and if so, when that outcome occurs
+  # ## Note: at a later date, we need to ensure we're capturing the fact that only symptomatic people will die (i.e. correlated outcomes)
+  # offspring_cases_outcome <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_death))
+  # offspring_cases_outcome_time <- rep(NA_real_, num_offspring)
+  # offspring_cases_outcome_time[offspring_cases_outcome] <- infection_to_death(n = sum(offspring_cases_outcome))
+  # offspring_cases_outcome_time[!offspring_cases_outcome] <- infection_to_recovery(n = sum(!offspring_cases_outcome))
+
+  ## Step 9: Output dataframe
   offspring_df <- data.frame(
-    id             = seq_len(num_offspring),         ## Note: this is going to be indexed from 1:num_offspring - we'll have to change it in the main dataframe
-    parent_class = rep(parent_class, num_offspring), ## note this allows for both
-    setting        = infection_settings,
-    time_infection = infection_times,
+    id             = NA_real_,         ## Note: this is going to be indexed from 1:num_offspring - we'll have to change it in the main dataframe
     class          = offspring_class,
+    setting        = infection_settings,
+    parent         = NA_integer_,
+    parent_class   = rep(parent_class, num_offspring), ## note this allows for both
+    generation     = NA_integer_,
+    time_infection_relative = infection_times,
+    time_infection_absolute = NA_real_,
+    symptomatic = NA,
+    time_symptom_onset_relative = NA_real_,
+    time_symptom_onset_absolute = NA_real_,
+    hospitalisation = NA,
+    time_hospitalisation_relative = NA_real_,
+    time_hospitalisation_absolute = NA_real_,
+    outcome = NA,
+    time_outcome_relative = NA_real_,
+    time_outcome_absolute = NA_real_,
+    funeral_safety = NA,
+    time_funeral_relative = NA_real_,
+    time_funeral_absolute = NA_real_,
+    n_offspring = NA_integer_,
+    offspring_generated = FALSE,
     stringsAsFactors = FALSE
   )
-
   return(offspring_df)
 }
