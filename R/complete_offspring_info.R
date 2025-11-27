@@ -81,7 +81,7 @@ complete_offspring_info <- function(
   offspring_cases_outcome <- temp_comm_outcome_death
   offspring_cases_outcome[offspring_cases_actually_hospitalised] <- hosp_outcome
   offspring_cases_outcome_time <- rep(NA_real_, num_offspring)
-  offspring_cases_outcome_time[!offspring_cases_actually_hospitalised] <- temp_comm_outcome_time
+  offspring_cases_outcome_time[!offspring_cases_actually_hospitalised] <- temp_comm_outcome_time[!offspring_cases_actually_hospitalised]
   offspring_cases_outcome_time[offspring_cases_outcome & offspring_cases_actually_hospitalised] <- offspring_cases_potentially_hospitalised_time[offspring_cases_outcome & offspring_cases_actually_hospitalised] + hospitalisation_to_death(n = sum(offspring_cases_outcome & offspring_cases_actually_hospitalised))
   offspring_cases_outcome_time[!offspring_cases_outcome & offspring_cases_actually_hospitalised] <- offspring_cases_potentially_hospitalised_time[!offspring_cases_outcome & offspring_cases_actually_hospitalised] + hospitalisation_to_recovery(n = sum(!offspring_cases_outcome & offspring_cases_actually_hospitalised))
 
