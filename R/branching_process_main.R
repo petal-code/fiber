@@ -18,18 +18,22 @@ branching_process_main <- function(
   ## Natural history
   generation_time,                 # DESCRIPTION HERE ## NOTE: CHARLIE NEEDS TO RECONCILE FACT THAT OFFSPRING FUNCTION HAS TG_SHAPE AND TG_RATE VS GENERATION TIME HERE
   infection_to_onset,              # DESCRIPTION HERE
-  infection_to_hospitalisation,
+  infection_to_hospitalisation,    # DESCRIPTION HERE
+  infection_to_death,              # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
+  infection_to_recovery,           # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
+
+  # Disease severity and healthcare seeking
   prob_symptomatic = NULL,
   prob_hospitalised_hcw = NULL,
   prob_hospitalised_genPop = NULL,
   prob_death_comm = NULL,
   prob_death_hosp = NULL,
-  infection_to_death = NULL,       # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
-  infection_to_recovery = NULL,    # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
 
   ## Parameters of the offspring and generation time distributions for general population (genPop)
   mn_offspring_genPop = NULL,               # mean of the offspring distribution for general population
   overdisp_offspring_genPop = NULL,         # overdispersion of the offspring distribution for general population
+
+  # note - this needs to change to a distribution
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
   hospital_quarantine_efficacy = NULL,      # efficacy of hospitalisation at reducing transmission (quarantine)
@@ -37,6 +41,8 @@ branching_process_main <- function(
   ## Parameters of the offspring and generation time distributions for HCWs
   mn_offspring_hcw = NULL,                  # mean of the offspring distribution for HCWs
   overdisp_offspring_hcw = NULL,            # overdispersion of the offspring distribution for HCWs
+
+  # note - this needs to change to a distribution
   Tg_shape_hcw = NULL,                      # gamma shape parameter for Tg distribution for HCWs
   Tg_rate_hcw = NULL,                       # gamma rate parameter for Tg distribution for HCWs
 
@@ -80,6 +86,8 @@ branching_process_main <- function(
   check_final_size,
   initial_immune = 0,
   seeding_cases,
+  susceptible_deplete = FALSE,  ## note - still need to add code around this as functionality
+                                ## envisaging this will adapt mn_offspring to reflect susceptible depletion
   seed
 
 ) {
@@ -92,17 +100,6 @@ branching_process_main <- function(
 
   ## Initialise the susceptible population
   susc <- population - initial_immune
-
-  ## Offspring distribution
-  ### NOTE: REVISIT THIS LATER ON - NOT CLEAR TO ME WHETHER WE SHOULD BE DOING THIS OR NOT.
-  if (disp_offspring <= 1) {
-    stop("For 'nbinom', require disp_offspring > 1 (use 'pois' otherwise).")
-  }
-  offspring_fun <- function(n, susc) {
-    new_mn <- mn_offspring * susc / population
-    size <- new_mn / (disp_offspring - 1)
-    truncdist::rtrunc(n, spec = "nbinom", b = susc, mu = new_mn, size = size)
-  }
 
   ## Preallocate data frame -
   max_cases <- check_final_size
