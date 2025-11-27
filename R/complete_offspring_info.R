@@ -1,4 +1,7 @@
 # consider turning individual parent information into a list at some point
+# consider removing some bits from offspring_functions and putting them in here directly
+# i.e. maybe all that offspring_functions do is calculate number of offspring produced? Or
+#      number of offspring, infection times, class, location etc?
 
 offspring_dataframe <- offspring_df
 parent_id <- 2
