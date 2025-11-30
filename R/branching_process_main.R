@@ -14,20 +14,20 @@
 ##       we approach parameterising this (maybe we put a check in place??)
 ## Note: prob_hospitalised_hcw and prob_hospitalised_genPop - do they need to be made specific to the location of the infection as well?
 
-mn_offspring_genPop = 10
-overdisp_offspring_genPop = 10
+mn_offspring_genPop = 3
+overdisp_offspring_genPop = 3
 Tg_shape_genPop = 20
 Tg_rate_genPop = 2
-mn_offspring_hcw = 10
-overdisp_offspring_hcw = 10
+mn_offspring_hcw = 3
+overdisp_offspring_hcw = 3
 Tg_shape_hcw = 20
 Tg_rate_hcw = 2
 mn_offspring_funeral = 5
-overdisp_offspring_funeral = 10
+overdisp_offspring_funeral = 1
 Tg_shape_funeral = 1000
 Tg_rate_funeral = 100
 incubation_period = function(n) { rgamma(n = n, shape = 5, rate = 2)}
-onset_to_hospitalisation = function(n) { rgamma(n = n, shape = 5, rate = 2) }
+onset_to_hospitalisation = function(n) { rgamma(n = n, shape = 20, rate = 2) }
 onset_to_death = function(n) { rgamma(n = n, shape = 40, rate = 2)}
 onset_to_recovery = function(n) { rgamma(n = n, shape = 40, rate = 2)}
 hospitalisation_to_death = function(n) { rgamma(n = n, shape = 20, rate = 2)}
@@ -53,7 +53,7 @@ prob_hcw_cond_funeral_hcw = 0.5
 prob_hcw_cond_funeral_genPop = 0.5
 tf = Inf
 population = 1e6
-check_final_size = 1000
+check_final_size = 10000
 initial_immune = 0
 seeding_cases = 10
 susceptible_deplete = FALSE
@@ -290,10 +290,10 @@ branching_process_main <- function(
                                                        hospitalisation_to_recovery = hospitalisation_to_recovery,
                                                        onset_to_death = onset_to_death,
                                                        onset_to_recovery = onset_to_recovery)
+      tdf$n_offspring[idx] <- nrow(complete_offspring_df)
+    } else {
+      tdf$n_offspring[idx] <- 0
     }
-
-    ## Completing parent information
-    tdf$n_offspring[idx] <- nrow(complete_offspring_df)
     tdf$offspring_generated[idx] <- TRUE
 
     #################################################################################################################

@@ -58,7 +58,7 @@ complete_offspring_info <- function(
   ##    all other factors notwithstanding, visit hospital. In the subsequent section, we will see whether they are *actually* hospitalised
   ##    (i.e. check they don't die/recover before they would) otherwise be hospitalised.
   ################################################################################################################################
-  prob_hosp <- ifelse(offspring_dataframe$class[offspring_symptomatic] == "hcw", prob_hosp_given_symptoms_hcw, prob_hosp_given_symptoms_genPop) # for symptomatic infections, setting class (HCW vs genPop) specific probability of hospitalisation
+  prob_hosp <- ifelse(offspring_dataframe$class[offspring_symptomatic] == "HCW", prob_hosp_given_symptoms_hcw, prob_hosp_given_symptoms_genPop) # for symptomatic infections, setting class (HCW vs genPop) specific probability of hospitalisation
   offspring_potentially_hosp <- rep(FALSE, num_offspring)
   offspring_potentially_hosp[offspring_symptomatic] <- as.logical(rbinom(n = sum(offspring_symptomatic), size = 1, prob = prob_hosp)) # assigning potential hospitalisation status; asymptomatics aren't hospitalised, so only update vector for symptomatics
   offspring_potentially_hosp_time <- rep(NA_real_, num_offspring)
