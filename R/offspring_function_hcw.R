@@ -48,7 +48,7 @@
 offspring_function_hcw <- function(
 
   ## Characteristics and properties of the parent (who we are generating the offspring for)
-  parent_info = NULL,
+  parent_info,
 
   ## Parameters of the offspring and generation time distributions for HCWs
   mn_offspring_hcw = NULL,                  # mean of the offspring distribution for HCWs
@@ -137,10 +137,8 @@ offspring_function_hcw <- function(
   offspring_class[flip_hcw] <- "HCW"
 
   # Step 6: Define and output dataframe with the results
-  offspring_df <- data.frame(id = seq_len(num_offspring_quarantine),
-                             parent_class = rep("HCW", num_offspring_quarantine),
-                             setting = infection_settings,
-                             time_infection = infection_times,
+  offspring_df <- data.frame(infection_location = infection_settings,
+                             time_infection_relative = infection_times,
                              class = offspring_class,
                              stringsAsFactors = FALSE)
 

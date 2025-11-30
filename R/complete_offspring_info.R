@@ -7,24 +7,6 @@
 ## of the infection event itself (natural history, timings etc) are handled in the "complete_offspring_info" function? Maybe.
 ## Check which rescue probability we need to be using for death in comm vs hosp
 ## need to add funeral safety info in here I think
-
-offspring_dataframe <- offspring_df
-parent_id <- 2
-parent_generation <- 2
-parent_infection_time = 10
-prob_symptomatic = 0.75
-infection_to_onset <- function(n) { rgamma(n = n, shape = 4, rate = 2)}
-onset_to_hospitalisation <- function(n) { rgamma(n = n, shape = 10, rate = 2)}
-infection_to_death <- function(n) { rgamma(n = n, shape = 20, rate = 2)}
-infection_to_recovery <- function(n) { rgamma(n = n, shape = 30, rate = 2)}
-hospitalisation_to_death <- function(n) {rgamma(n = n, shape = 50, rate = 1)}
-hospitalisation_to_recovery <- function(n) {rgamma(n = n, shape = 100, rate = 1)}
-prob_symptomatic = 0.5
-prob_hospitalised_hcw = 0.5
-prob_hospitalised_genPop = 0.5
-prob_death_comm = 0.5
-prob_death_hosp = 0.25
-
 complete_offspring_info <- function(
     ## Parent and offspring information
     parent_info = NULL,                  ## parent information (row from the main dataframe)
@@ -64,6 +46,7 @@ complete_offspring_info <- function(
   ##    the incubation period as the delay between infection and symptom onset if the infectee is symptomatic.
   ## Note: Incubation period isn't used otherwise, and so this section could be streamlined in subsequent versions potentially.
   ################################################################################################################################
+  num_offspring <- nrow(offspring_dataframe)
   offspring_incubation_period <- incubation_period(n = num_offspring)                                         ## drawing incubation period times from the incubation period distribution
   offspring_symptomatic <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_symptomatic))           ## calculating whether offspring are symptomatics
   offspring_time_symptom_onset <- rep(NA_real_, num_offspring)
@@ -141,32 +124,31 @@ complete_offspring_info <- function(
   comm_and_death_and_genPop <- offspring_outcome & !offspring_actually_hosp & offspring_dataframe$class == "genPop" ## those genPop who die and who do so in the community
 
   offspring_funeral_safety <- rep(FALSE, num_offspring)
-  offspring_funeral_safety[hosp_and_death_and_hcw] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_hosp_hcw)
-  offspring_funeral_safety[hosp_and_death_and_genPop] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_hosp_genPop)
-  offspring_funeral_safety[comm_and_death_and_hcw] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_comm_hcw)
-  offspring_funeral_safety[comm_and_death_and_genPop] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_comm_genPop)
+  offspring_funeral_safety[hosp_and_death_and_hcw] <- rbinom(n = sum(hosp_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_hosp_hcw)
+  offspring_funeral_safety[hosp_and_death_and_genPop] <- rbinom(n = sum(hosp_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_hosp_genPop)
+  offspring_funeral_safety[comm_and_death_and_hcw] <- rbinom(n = sum(comm_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_comm_hcw)
+  offspring_funeral_safety[comm_and_death_and_genPop] <- rbinom(n = sum(comm_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_comm_genPop)
 
   ################################################################################################################################
   ## Step 5: Update and output offspring dataframe
   ################################################################################################################################
-  offspring_dataframe$parent <-                             parent_info$parent_id
-  offspring_dataframe$generation <-                         parent_info$parent_generation + 1
-  offspring_dataframe$time_infection_absolute <-            parent_info$parent_infection_time + offspring_dataframe$time_infection_relative
-  offspring_dataframe$incubation_period <-                  offspring_incubation
+  offspring_dataframe$parent <-                             parent_info$id
+  offspring_dataframe$generation <-                         parent_info$generation + 1
+  offspring_dataframe$time_infection_absolute <-            parent_info$time_infection_absolute + offspring_dataframe$time_infection_relative
+  offspring_dataframe$incubation_period <-                  offspring_incubation_period
   offspring_dataframe$symptomatic <-                        offspring_symptomatic
-  offspring_dataframe$time_symptom_onset_relative <-        offspring_symptom_onset
-  offspring_dataframe$time_symptom_onset_absolute <-        offspring_dataframe$time_infection_absolute + offspring_symptom_onset
-  offspring_dataframe$potentially_hospitalised <-           offspring_potentially_hosp
+  offspring_dataframe$time_symptom_onset_relative <-        offspring_time_symptom_onset
+  offspring_dataframe$time_symptom_onset_absolute <-        offspring_dataframe$time_infection_absolute + offspring_dataframe$time_symptom_onset_relative
   offspring_dataframe$hospitalisation <-                    offspring_actually_hosp
-  offspring_dataframe$time_hospitalisation_relative <-      offspring_incubation + offspring_actually_hosp_time
+  offspring_dataframe$time_hospitalisation_relative <-      offspring_incubation_period + offspring_actually_hosp_time
   offspring_dataframe$time_hospitalisation_absolute <-      offspring_dataframe$time_infection_absolute + offspring_dataframe$time_hospitalisation_relative
   offspring_dataframe$outcome <-                            offspring_outcome
   offspring_dataframe$outcome_location <-                   offspring_outcome_location
-  offspring_dataframe$time_outcome_relative <-              offspring_incubation + offspring_outcome_time
+  offspring_dataframe$time_outcome_relative <-              offspring_incubation_period + offspring_outcome_time
   offspring_dataframe$time_outcome_absolute <-              offspring_dataframe$time_infection_absolute + offspring_dataframe$time_outcome_relative
   offspring_dataframe$funeral_safety <-                     offspring_funeral_safety
-  offspring_dataframe$time_funeral_relative <-              offspring_dataframe$time_outcome_relative + offspring_funeral_time
-  offspring_dataframe$time_funeral_absolute <-               offspring_dataframe$time_infection_absolute + offspring_dataframe$time_funeral_relative
+  offspring_dataframe$n_offspring <-                        rep(NA_integer_, num_offspring)
+  offspring_dataframe$offspring_generated <-                rep(FALSE, num_offspring)
 
   ## Step 5: Return completed dataframe
   return(offspring_dataframe)
