@@ -244,7 +244,8 @@ branching_process_main <- function(
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
-      offspring_community_healthcare_df <- offspring_function_hcw(mn_offspring_hcw = mn_offspring_hcw,
+      offspring_community_healthcare_df <- offspring_function_hcw(parent_info = parent_info,
+                                                                  mn_offspring_hcw = mn_offspring_hcw,
                                                                   overdisp_offspring_hcw = overdisp_offspring_hcw,
                                                                   Tg_shape_hcw = Tg_shape_hcw,
                                                                   Tg_rate_hcw = Tg_rate_hcw,
@@ -271,25 +272,26 @@ branching_process_main <- function(
     ### Step 4: Complete offspring information based on parent attributes and timings; and update parent information
     ##          (e.g. num_offspring, offspring_generated == TRUE etc)
     #################################################################################################################
-    ## Completing offspring information
-    complete_offspring_df <- complete_offspring_info(parent_info = parent_info,
-                                                     offspring_dataframe = rbind(offspring_community_healthcare_df, offspring_funeral_df),
-                                                     prob_symptomatic = prob_symptomatic,
-                                                     prob_hospitalised_hcw = prob_hospitalised_hcw,
-                                                     prob_hospitalised_genPop = prob_hospitalised_genPop,
-                                                     prob_death_comm = prob_death_comm,
-                                                     prob_death_hosp = prob_death_hosp,
-                                                     p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
-                                                     p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
-                                                     p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
-                                                     p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
-                                                     incubation_period = incubation_period,
-                                                     onset_to_hospitalisation = onset_to_hospitalisation,
-                                                     hospitalisation_to_death = hospitalisation_to_death,
-                                                     hospitalisation_to_recovery = hospitalisation_to_recovery,
-                                                     onset_to_death = onset_to_death,
-                                                     onset_to_recovery = onset_to_recovery)
-
+    ## Completing offspring information if there are any
+    if (nrow(rbind(offspring_community_healthcare_df, offspring_funeral_df)) > 0) {
+      complete_offspring_df <- complete_offspring_info(parent_info = parent_info,
+                                                       offspring_dataframe = rbind(offspring_community_healthcare_df, offspring_funeral_df),
+                                                       prob_symptomatic = prob_symptomatic,
+                                                       prob_hospitalised_hcw = prob_hospitalised_hcw,
+                                                       prob_hospitalised_genPop = prob_hospitalised_genPop,
+                                                       prob_death_comm = prob_death_comm,
+                                                       prob_death_hosp = prob_death_hosp,
+                                                       p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
+                                                       p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
+                                                       p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+                                                       p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+                                                       incubation_period = incubation_period,
+                                                       onset_to_hospitalisation = onset_to_hospitalisation,
+                                                       hospitalisation_to_death = hospitalisation_to_death,
+                                                       hospitalisation_to_recovery = hospitalisation_to_recovery,
+                                                       onset_to_death = onset_to_death,
+                                                       onset_to_recovery = onset_to_recovery)
+    }
 
     ## Completing parent information
     tdf$n_offspring[idx] <- nrow(complete_offspring_df)
@@ -299,11 +301,10 @@ branching_process_main <- function(
     ### Step 5: Adding the complete offspring dataframe (complete_offspring_df) to the main dataframe (tdf)
     #################################################################################################################
     ## If offspring exist, append them
-    current_max_row <- max(which(!is.na(tdf$time_infection_absolute)))
-    current_max_id <- max(tdf$id[which(!is.na(tdf$time_infection_absolute))])
-    complete_offspring_df$id <- (current_max_id + 1):(current_max_id + nrow(complete_offspring_df))
-
     if (nrow(complete_offspring_df) > 0) {
+      current_max_row <- max(which(!is.na(tdf$time_infection_absolute)))
+      current_max_id <- max(tdf$id[which(!is.na(tdf$time_infection_absolute))])
+      complete_offspring_df$id <- (current_max_id + 1):(current_max_id + nrow(complete_offspring_df))
       tdf[(current_max_row + 1):(current_max_row + nrow(complete_offspring_df)), ] <- complete_offspring_df[, names(tdf), drop = FALSE]
     }
     ## Deplete susceptibles
