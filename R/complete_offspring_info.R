@@ -124,26 +124,14 @@ complete_offspring_info <- function(
   comm_and_death_and_genPop <- offspring_outcome & !offspring_actually_hosp & offspring_dataframe$class == "genPop" ## those genPop who die and who do so in the community
 
   offspring_funeral_safety <- rep(NA_character_, num_offspring)
-  offspring_funeral_safety[hosp_and_death_and_hcw] <- ifelse(
-    rbinom(n = sum(hosp_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_hosp_hcw) == 1,
-    "unsafe",
-    "safe"
-  )
-  offspring_funeral_safety[hosp_and_death_and_genPop] <- ifelse(
-    rbinom(n = sum(hosp_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_hosp_genPop) == 1,
-    "unsafe",
-    "safe"
-  )
-  offspring_funeral_safety[comm_and_death_and_hcw] <- ifelse(
-    rbinom(n = sum(comm_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_comm_hcw) == 1,
-    "unsafe",
-    "safe"
-  )
-  offspring_funeral_safety[comm_and_death_and_genPop] <- ifelse(
-    rbinom(n = sum(comm_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_comm_genPop) == 1,
-    "unsafe",
-    "safe"
-  )
+  offspring_funeral_safety[hosp_and_death_and_hcw] <- ifelse(rbinom(n = sum(hosp_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_hosp_hcw) == 1,
+                                                             "unsafe", "safe")
+  offspring_funeral_safety[hosp_and_death_and_genPop] <- ifelse(rbinom(n = sum(hosp_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_hosp_genPop) == 1,
+                                                                "unsafe", "safe")
+  offspring_funeral_safety[comm_and_death_and_hcw] <- ifelse(rbinom(n = sum(comm_and_death_and_hcw), size = 1, prob = p_unsafe_funeral_comm_hcw) == 1,
+                                                             "unsafe", "safe")
+  offspring_funeral_safety[comm_and_death_and_genPop] <- ifelse(rbinom(n = sum(comm_and_death_and_genPop), size = 1, prob = p_unsafe_funeral_comm_genPop) == 1,
+                                                                "unsafe", "safe")
 
   ################################################################################################################################
   ## Step 5: Update and output offspring dataframe
