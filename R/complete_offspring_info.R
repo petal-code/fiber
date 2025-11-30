@@ -89,6 +89,9 @@ complete_offspring_info <- function(
   ##     we them give another "chance" to be saved at the hospital.
   hosp_success <- offspring_potentially_hosp_time[offspring_potentially_hosp] < temp_comm_outcome_time[offspring_potentially_hosp] # checking whether community outcome occurs before potential hospitalisation
   second_chance_death_prob <- prob_death_hosp / prob_death_comm  ## Note: check whether this should actually be second_chance_death_prob <- prob_death_hosp / prob_death_given_symptoms_comm
+  if (second_chance_death_prob > 1) {
+    stop("second_chance_death_prob can't be greater than 1")
+  }
   hosp_outcome <- temp_comm_outcome_death[offspring_potentially_hosp][hosp_success] # subsetting all offspring by those potentially hospitalised, and then the subset of those who actually are
   hosp_outcome[which(hosp_outcome)] <- as.logical(rbinom(n = sum(hosp_outcome), size = 1, prob = second_chance_death_prob)) # for those who would die in hospital (i.e. hosp_outcome == TRUE), give them a second chance
 
