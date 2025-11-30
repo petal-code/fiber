@@ -136,8 +136,7 @@ offspring_function_funeral <- function(
 
   # Step 1: Ensure parent is dead. If parent survived, no funeral transmission
   if (!isTRUE(parent_died)) {
-    return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
-                      time_infection=numeric(0), class=character(0), stringsAsFactors=FALSE))
+    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
   # Step 2: Determine whether death occurred BEFORE hospitalisation (community death) & assign the appropriate probability
@@ -174,8 +173,7 @@ offspring_function_funeral <- function(
   }
 
   if (num_offspring == 0L) {
-    return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
-                      time_infection=numeric(0), class=character(0), stringsAsFactors=FALSE))
+    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
   # Step 6: Generate infection times = outcome time + Gamma distributed 'delay', typically with
