@@ -72,17 +72,7 @@ infection_to_onset <- function(n) { rgamma(n = n, shape = 4, rate = 2)}
 offspring_function_funeral <- function(
 
   ## *Parent* characteristics and properties
-  parent_hospitalised = NULL, ### is the parent hospitalised (yes/no)
-  parent_time_to_hospitalisation = NULL, ### when over the course of the infection was the parent hospitalised
-  parent_time_to_outcome = NULL, ### when does the infection resolve (death or recovered)
-  parent_died = NULL, ### was the outcome at parent_time_to_outcome death? (yes/no)
-  parent_class = NULL,   # "genPop" or "HCW" this matters now because unlike other two functions (although improbable) parent could be either
-
-  ## Funeral occurrence
-  p_unsafe_funeral_comm_hcw = NULL,    ## probability the parent had an unsafe funeral Cond. on a community death and parent class being HCW
-  p_unsafe_funeral_hosp_hcw = NULL,    ## probability parent had an unsafe funeral cond. on a hospital death and parent class being HCW
-  p_unsafe_funeral_comm_genPop = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being genPop
-  p_unsafe_funeral_hosp_genPop = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being genPop
+  parent_info = NULL,
 
   ## Offspring distribution for unsafe funeral event
   mn_offspring_funeral = NULL, # mean number of offspring at unsafe funeral
@@ -169,6 +159,14 @@ offspring_function_funeral <- function(
   ## Logic for whether a safe or unsafe funeral occurs
   #########################################################################################
 
+  ## Step 0: Extract parent info
+  parent_hospitalised = parent_info$hospitalisation                          # whether the parent (infector) is hospitalised or not
+  parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
+  parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
+  parent_died = parent_info$outcome                                          # was the outcome at parent_time_to_outcome death? (yes/no)
+  parent_class = parent_info$class                                           # "genPop" or "HCW" this matters now because unlike other two functions (although improbable) parent could be either
+  parent_funeral = parent_info$funeral_safety                                # whether the funeral was safe or not (for those dying)
+
   # Step 1: Ensure parent is dead. If parent survived, no funeral transmission
   if (!isTRUE(parent_died)) {
     return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
@@ -185,8 +183,8 @@ offspring_function_funeral <- function(
     stop("Step 2 of funeral offspring function is broken")
   }
 
-  # Step 3: Bernoulli trial for determining whether an unsafe funeral occurs
-  has_unsafe_funeral <- as.logical(rbinom(n = 1, size = 1, prob = p_unsafe_funeral))
+  # Step 3: Information on whether the parent had an unsafe or safe funeral
+  has_unsafe_funeral <- parent_funeral # as.logical(rbinom(n = 1, size = 1, prob = p_unsafe_funeral)) # prev: Bernoulli trial for determining whether an unsafe funeral occurs
 
   #########################################################################################
   ## Produce funeral offspring

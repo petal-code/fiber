@@ -37,6 +37,12 @@ complete_offspring_info <- function(
     prob_death_comm = NULL,              ## probability of a non-hospitalised infection (community) dying
     prob_death_hosp = NULL,              ## probability of a hospitalised infection dying
 
+    ## Funeral occurrence
+    p_unsafe_funeral_comm_hcw = NULL,    ## probability the parent had an unsafe funeral Cond. on a community death and parent class being HCW
+    p_unsafe_funeral_hosp_hcw = NULL,    ## probability parent had an unsafe funeral cond. on a hospital death and parent class being HCW
+    p_unsafe_funeral_comm_genPop = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being genPop
+    p_unsafe_funeral_hosp_genPop = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being genPop
+
     ## Delay distributions
     incubation_period,                   ## between infection occurring and symptoms occurring (in symptomatic individuals)
     onset_to_hospitalisation,            ## between symptom onset and hospitalisation
@@ -125,7 +131,23 @@ complete_offspring_info <- function(
   offspring_outcome_location[offspring_actually_hosp] <- "hospital"
 
   ################################################################################################################################
-  ## Step 4: Update and output offspring dataframe
+  ## Step 4: Generating funeral status for those who die (i.e. whether it's safe or not)
+  ##
+  ##
+  ################################################################################################################################
+  hosp_and_death_and_hcw <- offspring_outcome & offspring_actually_hosp & offspring_dataframe$class == "HCW"        ## those hcw who die and who were hospitalised
+  hosp_and_death_and_genPop <- offspring_outcome & offspring_actually_hosp & offspring_dataframe$class == "genPop"  ## those genPop who die and who were hospitalised
+  comm_and_death_and_hcw <- offspring_outcome & !offspring_actually_hosp & offspring_dataframe$class == "HCW"       ## those hcw who die and who do so in the community
+  comm_and_death_and_genPop <- offspring_outcome & !offspring_actually_hosp & offspring_dataframe$class == "genPop" ## those genPop who die and who do so in the community
+
+  offspring_funeral_safety <- rep(FALSE, num_offspring)
+  offspring_funeral_safety[hosp_and_death_and_hcw] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_hosp_hcw)
+  offspring_funeral_safety[hosp_and_death_and_genPop] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_hosp_genPop)
+  offspring_funeral_safety[comm_and_death_and_hcw] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_comm_hcw)
+  offspring_funeral_safety[comm_and_death_and_genPop] <- rbinom(n = sum(hosp_and_death), size = 1, prob = p_unsafe_funeral_comm_genPop)
+
+  ################################################################################################################################
+  ## Step 5: Update and output offspring dataframe
   ################################################################################################################################
   offspring_dataframe$parent <-                             parent_info$parent_id
   offspring_dataframe$generation <-                         parent_info$parent_generation + 1
@@ -142,6 +164,9 @@ complete_offspring_info <- function(
   offspring_dataframe$outcome_location <-                   offspring_outcome_location
   offspring_dataframe$time_outcome_relative <-              offspring_incubation + offspring_outcome_time
   offspring_dataframe$time_outcome_absolute <-              offspring_dataframe$time_infection_absolute + offspring_dataframe$time_outcome_relative
+  offspring_dataframe$funeral_safety <-                     offspring_funeral_safety
+  offspring_dataframe$time_funeral_relative <-              offspring_dataframe$time_outcome_relative + offspring_funeral_time
+  offspring_dataframe$time_funeral_absolute <-               offspring_dataframe$time_infection_absolute + offspring_dataframe$time_funeral_relative
 
   ## Step 5: Return completed dataframe
   return(offspring_dataframe)

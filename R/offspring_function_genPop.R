@@ -39,9 +39,7 @@
 offspring_function_genPop <- function(
 
   ## Characteristics and properties of the parent (who we are generating the offspring for)
-  parent_hospitalised = NULL,               # whether the parent (infector) is hospitalised or not
-  parent_time_to_hospitalisation = NULL,    # if parent is hospitalised, the time of hospitalisation (relative to infection)
-  parent_time_to_outcome = NULL,            # the time when the parent dies/recovers (relative to time of infection)
+  parent_info = NULL,
 
   ## Parameters of the offspring and generation time distributions for general population (genPop)
   mn_offspring_genPop = NULL,               # mean of the offspring distribution for general population
@@ -80,6 +78,11 @@ offspring_function_genPop <- function(
   ########################################################################################################
   ## Generating offspring, offspring infection times, offspring infection locations & offspring classes
   ########################################################################################################
+
+  # Step 0: Extract relevant parent information from parent_info
+  parent_hospitalised = parent_info$hospitalisation                          # whether the parent (infector) is hospitalised or not
+  parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
+  parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
 
   # Step 1: Draw from offspring distribution to produce raw number of offspring
   num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_genPop, size = overdisp_offspring_genPop)

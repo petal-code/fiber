@@ -116,6 +116,7 @@ branching_process_main <- function(
     generation                   = integer(max_cases),   # generation of the infected individual i.e. how many infections precede them in the transmission chain
     time_infection_relative      = NA_real_,             # time of the infection relative to the parent
     time_infection_absolute      = NA_real_,             # time of the infection in absolute calendar time (i.e. since start of outbreak)
+    incubation_period            = NA_real_,
     symptomatic                  = NA,                   # are they symptomatic?
     time_symptom_onset_relative  = NA_real_,             # time of symptom onset relative to the parent
     time_symptom_onset_absolute  = NA_real_,             # time of symptom onset in absolute calendar time (i.e. since start of outbreak)
@@ -123,6 +124,7 @@ branching_process_main <- function(
     time_hospitalisation_relative  = NA_real_,
     time_hospitalisation_absolute  = NA_real_,
     outcome                      = NA_character_,         # what the outcome is for that individual
+    outcome_location             = NA_character_,
     time_outcome_relative        = NA_real_,
     time_outcome_absolute        = NA_real_,
     funeral_safety               = NA_character_,
@@ -132,6 +134,8 @@ branching_process_main <- function(
     offspring_generated           = FALSE,
     stringsAsFactors = FALSE
   )
+
+  ## Note - offspring_function_funeral doesn't currently
 
   #########################################################################
   ### Step 2: Initialise conditions and features of the seeding cases
@@ -199,22 +203,16 @@ branching_process_main <- function(
     ###################################################################################################################
     ### Step 2: Generate offspring associated with community and (if hospitalised) healthcare associated transmission
     ###################################################################################################################
-    if (parent_class == "genPop") {
-      offspring_community_healthcare_df <- offspring_function_genPop(parent_hospitalised = parent_info$hospitalisation,
-                                                                     parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,  ## check this is correct being relative
-                                                                     parent_time_to_outcome = parent_info$time_outcome_relative,                  ## check this is correct being relative
-                                                                     mn_offspring_genPop = mn_offspring_genPop,
+    if (parent_info$class == "genPop") {
+      offspring_community_healthcare_df <- offspring_function_genPop(mn_offspring_genPop = mn_offspring_genPop,
                                                                      overdisp_offspring_genPop = overdisp_offspring_genPop,
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
-    } else if (parent_class == "HCW") {
-      offspring_community_healthcare_df <- offspring_function_hcw(parent_hospitalised = parent_info$hospitalisation,,
-                                                                  parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,
-                                                                  parent_time_to_outcome = parent_info$time_outcome_relative,
-                                                                  mn_offspring_hcw = mn_offspring_hcw,
+    } else if (parent_info$class == "HCW") {
+      offspring_community_healthcare_df <- offspring_function_hcw(mn_offspring_hcw = mn_offspring_hcw,
                                                                   overdisp_offspring_hcw = overdisp_offspring_hcw,
                                                                   Tg_shape_hcw = Tg_shape_hcw,
                                                                   Tg_rate_hcw = Tg_rate_hcw,
@@ -228,15 +226,7 @@ branching_process_main <- function(
     #############################################################################################
     ### Step 3: Generate offspring associated with funeral transmission
     #############################################################################################
-    offspring_funeral_df <- offspring_function_funeral(parent_hospitalised = parent_info$hospitalisation,
-                                                       parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,
-                                                       parent_time_to_outcome =  parent_info$time_outcome_relative,
-                                                       parent_died = parent_info$outcome,
-                                                       parent_class = parent_info$class,
-                                                       p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
-                                                       p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
-                                                       p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
-                                                       p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+    offspring_funeral_df <- offspring_function_funeral(parent_info = parent_info,
                                                        mn_offspring_funeral = mn_offspring_funeral,
                                                        overdisp_offspring_funeral = overdisp_offspring_funeral,
                                                        Tg_shape_funeral = Tg_shape_funeral,
@@ -258,6 +248,10 @@ branching_process_main <- function(
       prob_hospitalised_genPop = prob_hospitalised_genPop,
       prob_death_comm = prob_death_comm,
       prob_death_hosp = prob_death_hosp,
+      p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
+      p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
+      p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+      p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
       incubation_period = incubation_period,
       onset_to_hospitalisation = onset_to_hospitalisation,
       hospitalisation_to_death = hospitalisation_to_death,
