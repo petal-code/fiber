@@ -27,10 +27,8 @@ prob_death_comm = 0.5
 prob_death_hosp = 0.25
 
 complete_offspring_info <- function(
+    parent_info = NULL,
     offspring_dataframe = NULL,
-    parent_id = NULL,
-    parent_generation = NULL,
-    parent_infection_time = NULL,
     prob_symptomatic = NULL,
     incubation_period,
     onset_to_hospitalisation,
@@ -112,7 +110,7 @@ complete_offspring_info <- function(
 
   ## Generating the vector of actual outcome and associated times
   offspring_outcome <- temp_comm_outcome_death
-  offspring_outcome[offspring_cases_actually_hospitalised] <- hosp_outcome   ## replacing community outcomes for those successfully hospitalised
+  offspring_outcome[offspring_actually_hosp] <- hosp_outcome   ## replacing community outcomes for those successfully hospitalised
   offspring_outcome_time <- rep(NA_real_, num_offspring)
   offspring_outcome_time[!offspring_actually_hosp] <- temp_comm_outcome_time[!offspring_actually_hosp] ## for those not hospitalised, just use the community time generated above
   hosp_and_death <- offspring_outcome & offspring_actually_hosp   ## temp vectors to help subset those hospitalised and who die
@@ -127,21 +125,21 @@ complete_offspring_info <- function(
   ################################################################################################################################
   ## Step 4: Update and output offspring dataframe
   ################################################################################################################################
-  offspring_dataframe$parent <- parent_id
-  offspring_dataframe$generation <- parent_generation + 1
-  offspring_dataframe$time_infection_absolute <- parent_infection_time + offspring_dataframe$time_infection_relative
-  offspring_dataframe$incubation_period <- offspring_cases_incubation
-  offspring_dataframe$symptomatic <- offspring_cases_symptomatic
-  offspring_dataframe$time_symptom_onset_relative <- offspring_cases_symptom_onset
-  offspring_dataframe$time_symptom_onset_absolute <- offspring_dataframe$time_infection_absolute + offspring_cases_symptom_onset
-  offspring_dataframe$potentially_hospitalised <- offspring_cases_potentially_hospitalised
-  offspring_dataframe$hospitalisation <- offspring_cases_actually_hospitalised
-  offspring_dataframe$time_hospitalisation_relative <- offspring_cases_incubation + offspring_cases_actually_hospitalised_time
-  offspring_dataframe$time_hospitalisation_absolute <- offspring_dataframe$time_infection_absolute + offspring_dataframe$time_hospitalisation_relative
-  offspring_dataframe$outcome <- offspring_cases_outcome
-  offspring_dataframe$outcome_location <- offspring_cases_outcome_location
-  offspring_dataframe$time_outcome_relative <- offspring_cases_incubation + offspring_cases_outcome_time
-  offspring_dataframe$time_outcome_absolute <- offspring_dataframe$time_infection_absolute + offspring_dataframe$time_outcome_relative
+  offspring_dataframe$parent <-                             parent_info$parent_id
+  offspring_dataframe$generation <-                         parent_info$parent_generation + 1
+  offspring_dataframe$time_infection_absolute <-            parent_info$parent_infection_time + offspring_dataframe$time_infection_relative
+  offspring_dataframe$incubation_period <-                  offspring_incubation
+  offspring_dataframe$symptomatic <-                        offspring_symptomatic
+  offspring_dataframe$time_symptom_onset_relative <-        offspring_symptom_onset
+  offspring_dataframe$time_symptom_onset_absolute <-        offspring_dataframe$time_infection_absolute + offspring_symptom_onset
+  offspring_dataframe$potentially_hospitalised <-           offspring_potentially_hosp
+  offspring_dataframe$hospitalisation <-                    offspring_actually_hosp
+  offspring_dataframe$time_hospitalisation_relative <-      offspring_incubation + offspring_actually_hosp_time
+  offspring_dataframe$time_hospitalisation_absolute <-      offspring_dataframe$time_infection_absolute + offspring_dataframe$time_hospitalisation_relative
+  offspring_dataframe$outcome <-                            offspring_outcome
+  offspring_dataframe$outcome_location <-                   offspring_outcome_location
+  offspring_dataframe$time_outcome_relative <-              offspring_incubation + offspring_outcome_time
+  offspring_dataframe$time_outcome_absolute <-              offspring_dataframe$time_infection_absolute + offspring_dataframe$time_outcome_relative
 
   ## Step 5: Return completed dataframe
   return(offspring_dataframe)
