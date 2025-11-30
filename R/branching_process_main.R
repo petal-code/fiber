@@ -58,6 +58,12 @@ initial_immune = 0
 seeding_cases = 10
 susceptible_deplete = FALSE
 seed = 400
+source("R/prob_hosp_given_symptoms.R")
+source("R/complete_offspring_info.R")
+source("R/offspring_function_funeral.R")
+source("R/offspring_function_genPop.R")
+source("R/offspring_function_hcw.R")
+source("R/rtrunc_gamma.R")
 
 branching_process_main <- function(
 
