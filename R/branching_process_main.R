@@ -292,6 +292,7 @@ branching_process_main <- function(
                                                        onset_to_recovery = onset_to_recovery)
       tdf$n_offspring[idx] <- nrow(complete_offspring_df)
     } else {
+      complete_offspring_df <- tdf[0, , drop = FALSE]
       tdf$n_offspring[idx] <- 0
     }
     tdf$offspring_generated[idx] <- TRUE
