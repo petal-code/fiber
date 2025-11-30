@@ -8,6 +8,10 @@
 ##       where there are actual parameters of the distribution inputs (e.g. Tg_shape_funeral and Tg_rate_funeral)
 ##       we should harmonise this at some point
 ## Note: we might make a function called "generate_seeding_case_attributes" or something that does everything that we do in step 2 currently
+## Note: we should change the function so that 1s/0s of parent outcome are characters i.e. "death" / "recovery" explicitly
+## Note: general note that we should be actively thinking about how to ensure we don't end up in weird edge cases where all
+##       of our infections end up dying or recovering before they even need healthcare. that'll require us to be careful with how
+##       we approach parameterising this (maybe we put a check in place??)
 
 branching_process_main <- function(
 
@@ -185,58 +189,20 @@ branching_process_main <- function(
     #############################################################################################
     ## Step 1: Get earliest infection not yet expanded to act as a parent, and their attributes
     #############################################################################################
-    ## note: call these "parent" rather than "index
-
     parent_time_infection <- min(tdf$time_infection[!tdf$offspring_generated & !is.na(tdf$time_infection)])
-    idx <- which(tdf$time_infection == time_infection_index & !tdf$offspring_generated)[1]
-    parent_id   <- tdf$id[idx]
-    parent_generation  <- tdf$generation[idx]
-
-    parent_symptomatic <- rbinom(n = 1, size = 1, prob = prob_symptomatic)
-    if (parent_class == "genPop") {
-      parent_hospitalised <- ifelse(parent_symptomatic, rbinom(n = 1, size = 1, prob = prob_hospitalised_genPop), NA)
-    } else if (parent_class  == "HCW") {
-      parent_hospitalised <- ifelse(parent_symptomatic, rbinom(n = 1, size = 1, prob = prob_hospitalised_hcw), NA)
+    idx <- which(tdf$time_infection == parent_time_infection & !tdf$offspring_generated)[1]
+    parent_info <- tdf[idx, ]
+    if (!parent_class %in% c("genPop", "HCW")) {
+      stop("error with parent class")
     }
-    parent_time_to_hospitalisation <- ifelse(parent_hospitalised, infection_to_hospitalisation(n = 1), NA)
-
-    if (parent_hospitalisation == TRUE) {
-      parent_outcome <- rbinom(n = 1, size = 1, prob = prob_death_hosp)
-    } else if (parent_hospitalisation == FALSE) {
-      parent_outcome <- rbinom(n = 1, size = 1, prob = prob_death_comm)
-    }
-
-    ## Note: we should change the function so that 1s/0s of parent outcome are characters i.e. "death" / "recovery" explicitly
-    ## Note: general note that we should be actively thinking about how to ensure we don't end up in weird edge cases where all
-    ##       of our infections end up dying or recovering before they even need healthcare. that'll require us to be careful with how
-    ##       we approach parameterising this (maybe we put a check in place??)
-    if (parent_outcome == TRUE) { ## if they died
-      parent_time_to_outcome <- infection_to_death(n = 1)
-    } else if (parent_outcome == FALSE) { ## if they recovered
-      parent_time_to_outcome <- infection_to_recovery(n = 1)
-    }
-
-    current_max <- max(tdf$id, na.rm = TRUE)
-    tdf$time_onset[idx] <- infection_to_onset(1)
-
-    ## Update overall df with the new parent data
-    tdf$symptomatic[idx] <- parent_symptomatic
-    tdf$hospitalised[idx] <- parent_hospitalised
-    ## need to do symptom onset times here
-    tdf$time_hospitalisation_relative[idx] <- parent_time_to_hospitalisation
-    tdf$time_hospitalisation_absolute[idx] <- ________
-    ## need to do the absolute here
-    tdf$outcome[idx] <- parent_outcome
-    tdf$time_outcome_relative[idx] <- parent_time_to_outcome
-    tdf$time_outcome_absolute[idx] <- ________
 
     ###################################################################################################################
     ### Step 2: Generate offspring associated with community and (if hospitalised) healthcare associated transmission
     ###################################################################################################################
     if (parent_class == "genPop") {
-      offspring_community_healthcare_df <- offspring_function_genPop(parent_hospitalised = parent_hospitalised,
-                                                                     parent_time_to_hospitalisation = parent_time_to_hospitalisation,
-                                                                     parent_time_to_outcome = parent_time_to_outcome,
+      offspring_community_healthcare_df <- offspring_function_genPop(parent_hospitalised = parent_info$hospitalisation,
+                                                                     parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,  ## check this is correct being relative
+                                                                     parent_time_to_outcome = parent_info$time_outcome_relative,                  ## check this is correct being relative
                                                                      mn_offspring_genPop = mn_offspring_genPop,
                                                                      overdisp_offspring_genPop = overdisp_offspring_genPop,
                                                                      Tg_shape_genPop = Tg_shape_genPop,
@@ -245,9 +211,9 @@ branching_process_main <- function(
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_class == "HCW") {
-      offspring_community_healthcare_df <- offspring_function_hcw(parent_hospitalised = parent_hospitalised,
-                                                                  parent_time_to_hospitalisation = parent_time_to_hospitalisation,
-                                                                  parent_time_to_outcome = parent_time_to_outcome,
+      offspring_community_healthcare_df <- offspring_function_hcw(parent_hospitalised = parent_info$hospitalisation,,
+                                                                  parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,
+                                                                  parent_time_to_outcome = parent_info$time_outcome_relative,
                                                                   mn_offspring_hcw = mn_offspring_hcw,
                                                                   overdisp_offspring_hcw = overdisp_offspring_hcw,
                                                                   Tg_shape_hcw = Tg_shape_hcw,
@@ -256,20 +222,17 @@ branching_process_main <- function(
                                                                   ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                   hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
-                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital
-      )
-    } else {
-      stop("Unknown parent class")
+                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
     }
 
     #############################################################################################
     ### Step 3: Generate offspring associated with funeral transmission
     #############################################################################################
-    offspring_funeral_df <- offspring_function_funeral(parent_hospitalised = parent_hospitalised,
-                                                       parent_time_to_hospitalisation = parent_time_to_hospitalisation,
-                                                       parent_time_to_outcome = parent_time_to_outcome,
-                                                       parent_died = parent_died,
-                                                       parent_class = parent_class,
+    offspring_funeral_df <- offspring_function_funeral(parent_hospitalised = parent_info$hospitalisation,
+                                                       parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative,
+                                                       parent_time_to_outcome =  parent_info$time_outcome_relative,
+                                                       parent_died = parent_info$outcome,
+                                                       parent_class = parent_info$class,
                                                        p_unsafe_funeral_comm_hcw = p_unsafe_funeral_comm_hcw,
                                                        p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
                                                        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
@@ -282,34 +245,39 @@ branching_process_main <- function(
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
                                                        prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
 
-    ## Note: we need to either 1) generate all of the information for each offspring when we simulate them, OR we need to return
-    ##       this info as part of the function call
-    ## this is important - we need to update tdf with the parent relative to these things:
-    funeral_safety               = NA_character_,
-    time_funeral_relative        = NA_real_,
-    time_funeral_absolute        = NA_real_,
-    ## but we only know these things once we've run the offspring function. Maybe that info needs to be returned alongside the dataframe
+    #################################################################################################################
+    ### Step 4: Complete offspring information based on parent attributes and timings; and update parent information
+    ##          (e.g. num_offspring, offspring_generated == TRUE etc)
+    #################################################################################################################
+    ## Completing offspring information
+    complete_offspring_df <- complete_offspring_info(
+      parent_info = parent_info,
+      offspring_dataframe = rbind(offspring_community_healthcare_df, offspring_funeral_df),
+      prob_symptomatic = prob_symptomatic,
+      prob_hospitalised_hcw = prob_hospitalised_hcw,
+      prob_hospitalised_genPop = prob_hospitalised_genPop,
+      prob_death_comm = prob_death_comm,
+      prob_death_hosp = prob_death_hosp,
+      incubation_period = incubation_period,
+      onset_to_hospitalisation = onset_to_hospitalisation,
+      hospitalisation_to_death = hospitalisation_to_death,
+      hospitalisation_to_recovery = hospitalisation_to_recovery,
+      onset_to_death = onset_to_death,
+      onset_to_recovery = onset_to_recovery)
 
+    ## Completing parent information
+    tdf$n_offspring[idx] <- nrow(complete_offspring_df)
+    tdf$offspring_generated[idx] <- TRUE
 
     #################################################################################################################
-    ### Step 4: Update parent attributes based on the results of this (e.g. num offspring produced etc)
+    ### Step 5: Adding the complete offspring dataframe (complete_offspring_df) to the main dataframe (tdf)
     #################################################################################################################
-    ### add in some code that updates columns in the row in the dataframe corresponding to the parent to reflect
-    ### the fact that we've now done stuff for them
-
-    #################################################################################################################
-    ### Step 5: Combine the separate transmission associated dataframes together and add them to the main dataframe
-    #################################################################################################################
-    overall_offspring_df <- rbind(offspring_community_healthcare_df, offspring_funeral_df)
-
     ## If children exist, append them
-    if (nrow(overall_offspring_df) > 0) {
-      tdf[(index + 1):(index + 1 + nrow(overall_offspring_df))] <- overall_offspring_df
+    if (nrow(complete_offspring_df) > 0) {
+      tdf[(index + 1):(index + 1 + nrow(complete_offspring_df))] <- complete_offspring_df
     }
-
     ## Deplete susceptibles
     susc <- susc - tdf$n_offspring[idx]
-
   }
 
   ## Final tidy

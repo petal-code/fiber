@@ -231,26 +231,6 @@ offspring_function_funeral <- function(
     stop("Step 7 of funeral offspring function is broken")
   }
 
-  # ## Step 8: Assigning symptom status, hospitalisation and outcome status
-  # ## Deciding whether the offspring cases are symptomatic, and if so, when they develop symptoms
-  # offspring_cases_symptomatic <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_symptomatic))
-  # offspring_cases_symptom_onset <- rep(NA_real_, num_offspring)
-  # offspring_cases_symptom_onset[offspring_cases_symptomatic] <- infection_to_onset(n = sum(offspring_cases_symptomatic))
-  #
-  # ## Deciding on the hospitalisation status for the offspring cases, and if so, when that outcome occurs
-  # ## Note: at a later date, we need to ensure we're capturing the fact that only symptomatic people will die (i.e. correlated outcomes)
-  # prob_hosp <- ifelse(offspring_class == "hcw", prob_hospitalised_hcw, prob_hospitalised_genPop)
-  # offspring_cases_hospitalised <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hosp))
-  # offspring_cases_hospitalised_time <- rep(NA_real_, num_offspring)
-  # offspring_cases_hospitalised_time[offspring_cases_hospitalised] <- infection_to_hospitalisation(n = sum(offspring_cases_hospitalised))
-  #
-  # ## Deciding on the outcome for the offspring cases, and if so, when that outcome occurs
-  # ## Note: at a later date, we need to ensure we're capturing the fact that only symptomatic people will die (i.e. correlated outcomes)
-  # offspring_cases_outcome <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_death))
-  # offspring_cases_outcome_time <- rep(NA_real_, num_offspring)
-  # offspring_cases_outcome_time[offspring_cases_outcome] <- infection_to_death(n = sum(offspring_cases_outcome))
-  # offspring_cases_outcome_time[!offspring_cases_outcome] <- infection_to_recovery(n = sum(!offspring_cases_outcome))
-
   ## Step 9: Output dataframe
   offspring_df <- data.frame(
     id             = NA_real_,         ## Note: this is going to be indexed from 1:num_offspring - we'll have to change it in the main dataframe
