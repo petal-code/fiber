@@ -185,7 +185,8 @@ branching_process_main <- function(
   seeding_cases_outcome_time[!seeding_cases_outcome] <- seeding_cases_incubation[!seeding_cases_outcome] + onset_to_recovery(n = sum(!seeding_cases_outcome))
 
   ## Deciding on the times of funerals for dead individuals (all of whom are assumed to have unsafe funerals)
-  seeding_cases_funeral_safety <- rep("unsafe", seeding_cases)
+  seeding_cases_funeral_safety <- rep(NA_character_, seeding_cases)
+  seeding_cases_funeral_safety[seeding_cases_outcome] <- "unsafe"
 
   ## Initialising the dataframe with the seed cases and their attributes
   tdf[1:seeding_cases, ] <- data.frame(
