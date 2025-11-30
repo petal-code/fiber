@@ -45,59 +45,88 @@ complete_offspring_info <- function(
     prob_death_hosp = NULL)
 {
 
-  ## Step 1: Assigning symptom status, hospitalisation and outcome status
-  ## Deciding whether the offspring cases are symptomatic, and if so, when they develop symptoms
-  offspring_cases_incubation <- incubation_period(n = num_offspring)
-  offspring_cases_symptomatic <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_symptomatic))
-  offspring_cases_symptom_onset <- rep(NA_real_, num_offspring)
-  offspring_cases_symptom_onset[offspring_cases_symptomatic] <- offspring_cases_incubation[offspring_cases_symptomatic]
+  ## Check which rescue probability we need to be using for death in comm vs hosp
 
-  ## Step 2: Deciding on the hospitalisation status for the (symptomatic) offspring cases, and if so, when that outcome occurs
-  prob_hosp_given_symptoms_hcw <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_hcw, prob_symptomatic = prob_symptomatic)
-  prob_hosp_given_symptoms_genPop <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_genPop, prob_symptomatic = prob_symptomatic)
-  prob_hosp <- ifelse(offspring_class[offspring_cases_symptomatic] == "hcw", prob_hosp_given_symptoms_hcw, prob_hosp_given_symptoms_genPop)
-  offspring_cases_potentially_hospitalised <- rep(FALSE, num_offspring)
-  offspring_cases_potentially_hospitalised[offspring_cases_symptomatic] <- as.logical(rbinom(n = sum(offspring_cases_symptomatic), size = 1, prob = prob_hosp))
-  offspring_cases_potentially_hospitalised_time <- rep(NA_real_, num_offspring)
-  offspring_cases_potentially_hospitalised_time[offspring_cases_potentially_hospitalised] <- onset_to_hospitalisation(n = sum(offspring_cases_potentially_hospitalised))
-
-  ## Step 3: Deciding on the outcome for the offspring cases, and if so, when that outcome occurs
-  ## Note: at a later date, we need to ensure we're capturing the fact that only symptomatic people will die (i.e. correlated outcomes)
-
-  ## 3.1 Start by assuming community and calculate which event occurs and when it occurs
+  ## Step 0: Calculating some probabilities and other variables we'll need below
+  prob_hosp_given_symptoms_hcw <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_hcw, prob_symptomatic = prob_symptomatic)       # calculate prob_hosp given some asymptomatic fraction who never need healthcare
+  prob_hosp_given_symptoms_genPop <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_genPop, prob_symptomatic = prob_symptomatic) # calculate prob_hosp given some asymptomatic fraction who never need healthcare
   prob_death_given_symptoms_comm <- prob_death_given_symptoms(prob_death = prob_death_comm, prob_symptomatic = prob_symptomatic)
+
+  ################################################################################################################################
+  ## Step 1: Deciding whether the offspring cases are symptomatic, and if so, when they develop symptoms
+  ##  - In this section, we first generate incubation periods for every infection, then decide who is symptomatic, and then use
+  ##    the incubation period as the delay between infection and symptom onset if the infectee is symptomatic.
+  ## Note: Incubation period isn't used otherwise, and so this section could be streamlined in subsequent versions potentially.
+  ################################################################################################################################
+  offspring_incubation_period <- incubation_period(n = num_offspring)                                         ## drawing incubation period times from the incubation period distribution
+  offspring_symptomatic <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_symptomatic))           ## calculating whether offspring are symptomatics
+  offspring_time_symptom_onset <- rep(NA_real_, num_offspring)
+  offspring_time_symptom_onset[offspring_symptomatic] <- offspring_incubation_period[offspring_symptomatic]   ## populating vector of symptom onset times with incubation period for symptomatic offspring
+
+  ################################################################################################################################
+  ## Step 2: Deciding whether symptomatic offspring are potentially hospitalised
+  ##  - In this section, we calculate the potential hospitalisation status for the (symptomatic) offspring cases, i.e. whether they would
+  ##    all other factors notwithstanding, visit hospital. In the subsequent section, we will see whether they are *actually* hospitalised
+  ##    (i.e. check they don't die/recover before they would) otherwise be hospitalised.
+  ################################################################################################################################
+  prob_hosp <- ifelse(offspring_dataframe$class[offspring_symptomatic] == "hcw", prob_hosp_given_symptoms_hcw, prob_hosp_given_symptoms_genPop) # for symptomatic infections, setting class (HCW vs genPop) specific probability of hospitalisation
+  offspring_potentially_hosp <- rep(FALSE, num_offspring)
+  offspring_potentially_hosp[offspring_symptomatic] <- as.logical(rbinom(n = sum(offspring_symptomatic), size = 1, prob = prob_hosp)) # assigning potential hospitalisation status; asymptomatics aren't hospitalised, so only update vector for symptomatics
+  offspring_potentially_hosp_time <- rep(NA_real_, num_offspring)
+  offspring_potentially_hosp_time[offspring_potentially_hosp] <- onset_to_hospitalisation(n = sum(offspring_potentially_hosp)) # assigning potential hospitalisation time; asymptomatics aren't hospitalised, so only update vector for symptomatics
+
+  ################################################################################################################################
+  ## Step 3: Deciding on the outcome for the offspring cases, and if so, when that outcome occurs
+  ##  - In this section, we calculate the outcome for the offspring (recovery or death), when this occurs and where this occurs (community or healthcare).
+  ##    It's here we see whether a "potential" hospitalisation is *actually* hospitalised i.e. we check that they don't recover/die before they
+  ##    would access healthcare.
+  ##  - This section was hard to code because time-to-event shapes hospitalisation (i.e. whether or not someone is hospitalised successfully) but also
+  ##    hospitalisation shapes time-to-outcome (i.e. we have diff distributions for time-to-outcome dependent on whether someone is hospitalised).
+  ##    We therefore start by assuming a community outcome, see when that event occurs (and what it is) and see if it precludes hospitalisation. If it
+  ##    does, the infection remains a community one. If it doesn't, we say they are admitted - if the individual would have recovered in the community,
+  ##    we assume they also recover in hospital. If they would have died in the community, we assume they have a "chance" at being saved by the healthcare.
+  ################################################################################################################################
+
+  ## 3.1 For all offspring, we start by assuming a community outcome, and calculate which event (recovery or death) occurs and when it occurs
   temp_comm_outcome_death <- rep(FALSE, num_offspring)
-  temp_comm_outcome_death[offspring_cases_symptomatic] <-  as.logical(rbinom(n = sum(offspring_cases_symptomatic), size = 1, prob = prob_death_given_symptoms_comm))
+  temp_comm_outcome_death[offspring_symptomatic] <-  as.logical(rbinom(n = sum(offspring_symptomatic), size = 1, prob = prob_death_given_symptoms_comm))  ## only symptomatic offspring can die
   temp_comm_outcome_time <- rep(NA_real_, num_offspring)
-  temp_comm_outcome_time[temp_comm_outcome_death] <- onset_to_death(n = sum(temp_comm_outcome_death))
-  temp_comm_outcome_time[!temp_comm_outcome_death] <- onset_to_recovery(n = sum(!temp_comm_outcome_death))
+  temp_comm_outcome_time[temp_comm_outcome_death] <- onset_to_death(n = sum(temp_comm_outcome_death))      ## for those dying, when do they die
+  temp_comm_outcome_time[!temp_comm_outcome_death] <- onset_to_recovery(n = sum(!temp_comm_outcome_death)) ## for those recovering, when do they recovering
 
-  ## 3.2 If community event earlier than hosp, keep the community event and associated times; if hospitalisation precedes
-  ##     the community event, hospitalisation is successful. If community event is recovery, keep as recovery in hospital.
-  ##     If community event was death, give another "chance" to be saved
-  hosp_success <- offspring_cases_potentially_hospitalised_time[offspring_cases_potentially_hospitalised] < temp_comm_outcome_time[offspring_cases_potentially_hospitalised]
-  second_chance_death_prob <- prob_death_hosp / prob_death_comm  ## which should this be  ## check which one of these this should be - unclear to me currently, but overarching idea remains
-  # second_chance_death_prob <- prob_death_hosp / prob_death_given_symptoms_comm ## which should this be
-  hosp_outcome <- temp_comm_outcome_death[offspring_cases_potentially_hospitalised][hosp_success]
-  hosp_outcome[which(hosp_outcome)] <- as.logical(rbinom(n = sum(hosp_outcome), size = 1, prob = second_chance_death_prob))
+  ## 3.2 For those offspring who *could* hospitalised (i.e. potentially hospitalised in Step 2), if the community outcome occurs earlier than their potential hospitalisation,
+  ##     we just keep the community outcome (which occurs earlier than hospitalisation and thus precludes it); if hospitalisation precedes the community outcome, hospitalisation is successful.
+  ##     If they are successfully hospitalised and the community outcome was a recovery, we assume they also recover in hospital. If the community outcome was death,
+  ##     we them give another "chance" to be saved at the hospital.
+  hosp_success <- offspring_potentially_hosp_time[offspring_potentially_hosp] < temp_comm_outcome_time[offspring_potentially_hosp] # checking whether community outcome occurs before potential hospitalisation
+  second_chance_death_prob <- prob_death_hosp / prob_death_comm  ## Note: check whether this should actually be second_chance_death_prob <- prob_death_hosp / prob_death_given_symptoms_comm
+  hosp_outcome <- temp_comm_outcome_death[offspring_potentially_hosp][hosp_success] # subsetting all offspring by those potentially hospitalised, and then the subset of those who actually are
+  hosp_outcome[which(hosp_outcome)] <- as.logical(rbinom(n = sum(hosp_outcome), size = 1, prob = second_chance_death_prob)) # for those who would die in hospital (i.e. hosp_outcome == TRUE), give them a second chance
 
-  # Generating the dataframes for i) potentially hospitalised; ii) actually hospitalised; and iii) outcome
-  offspring_cases_actually_hospitalised <- offspring_cases_potentially_hospitalised
-  offspring_cases_actually_hospitalised[offspring_cases_potentially_hospitalised] <- hosp_success
-  offspring_cases_actually_hospitalised_time <- rep(NA_real_, num_offspring)
-  offspring_cases_actually_hospitalised_time[offspring_cases_actually_hospitalised] <- offspring_cases_potentially_hospitalised_time[offspring_cases_actually_hospitalised]
+  ## 3.3 Generating the final information for all offspring to be inputted into the offspring dataframe
+  ## Generating the vector of actual hospitalisation status and associated times (if hospitalised)
+  offspring_actually_hosp <- offspring_potentially_hosp
+  offspring_actually_hosp[offspring_potentially_hosp] <- hosp_success
+  offspring_actually_hosp_time <- rep(NA_real_, num_offspring)
+  offspring_actually_hosp_time[offspring_actually_hosp] <- offspring_potentially_hosp_time[offspring_actually_hosp] ## filling this vector in with hosp times for those successfully hopspitalised
 
-  offspring_cases_outcome <- temp_comm_outcome_death
-  offspring_cases_outcome[offspring_cases_actually_hospitalised] <- hosp_outcome
-  offspring_cases_outcome_time <- rep(NA_real_, num_offspring)
-  offspring_cases_outcome_time[!offspring_cases_actually_hospitalised] <- temp_comm_outcome_time[!offspring_cases_actually_hospitalised]
-  offspring_cases_outcome_time[offspring_cases_outcome & offspring_cases_actually_hospitalised] <- offspring_cases_potentially_hospitalised_time[offspring_cases_outcome & offspring_cases_actually_hospitalised] + hospitalisation_to_death(n = sum(offspring_cases_outcome & offspring_cases_actually_hospitalised))
-  offspring_cases_outcome_time[!offspring_cases_outcome & offspring_cases_actually_hospitalised] <- offspring_cases_potentially_hospitalised_time[!offspring_cases_outcome & offspring_cases_actually_hospitalised] + hospitalisation_to_recovery(n = sum(!offspring_cases_outcome & offspring_cases_actually_hospitalised))
+  ## Generating the vector of actual outcome and associated times
+  offspring_outcome <- temp_comm_outcome_death
+  offspring_outcome[offspring_cases_actually_hospitalised] <- hosp_outcome   ## replacing community outcomes for those successfully hospitalised
+  offspring_outcome_time <- rep(NA_real_, num_offspring)
+  offspring_outcome_time[!offspring_actually_hosp] <- temp_comm_outcome_time[!offspring_actually_hosp] ## for those not hospitalised, just use the community time generated above
+  hosp_and_death <- offspring_outcome & offspring_actually_hosp   ## temp vectors to help subset those hospitalised and who die
+  hosp_and_recover <-!offspring_outcome & offspring_actually_hosp ## temp vectors to help subset those hospitalised and who recover
+  offspring_outcome_time[hosp_and_death] <- offspring_potentially_hosp_time[hosp_and_death] + hospitalisation_to_death(n = sum(hosp_and_death))
+  offspring_outcome_time[hosp_and_recover] <- offspring_potentially_hosp_time[hosp_and_recover] + hospitalisation_to_recovery(n = sum(hosp_and_recover))
 
-  offspring_cases_outcome_location <- rep("community", num_offspring)
-  offspring_cases_outcome_location[offspring_cases_actually_hospitalised] <- "hospital"
+  ## Generating the vector of where the outcome occurs
+  offspring_outcome_location <- rep("community", num_offspring)
+  offspring_outcome_location[offspring_actually_hosp] <- "hospital"
 
+  ################################################################################################################################
   ## Step 4: Update and output offspring dataframe
+  ################################################################################################################################
   offspring_dataframe$parent <- parent_id
   offspring_dataframe$generation <- parent_generation + 1
   offspring_dataframe$time_infection_absolute <- parent_infection_time + offspring_dataframe$time_infection_relative
