@@ -139,17 +139,7 @@ offspring_function_funeral <- function(
     return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
-  # Step 2: Determine whether death occurred BEFORE hospitalisation (community death) & assign the appropriate probability
-  community_death <- !isTRUE(parent_hospitalised) || (parent_time_to_outcome < parent_time_to_hospitalisation)
-  if (parent_class == "genPop") {
-    p_unsafe_funeral <- if (isTRUE(community_death)) p_unsafe_funeral_comm_genPop else p_unsafe_funeral_hosp_genPop
-  } else if (parent_class == "HCW") {
-    p_unsafe_funeral <- if (isTRUE(community_death)) p_unsafe_funeral_comm_hcw else p_unsafe_funeral_hosp_hcw
-  } else {
-    stop("Step 2 of funeral offspring function is broken")
-  }
-
-  # Step 3: Information on whether the parent had an unsafe or safe funeral
+  # Step 2: Information on whether the parent had an unsafe or safe funeral
   has_unsafe_funeral <- parent_funeral # as.logical(rbinom(n = 1, size = 1, prob = p_unsafe_funeral)) # prev: Bernoulli trial for determining whether an unsafe funeral occurs
   has_unsafe_funeral <- ifelse(has_unsafe_funeral == "unsafe", TRUE, FALSE)
 
@@ -157,14 +147,14 @@ offspring_function_funeral <- function(
   ## Produce funeral offspring
   #########################################################################################
 
-  # Step 4: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one)
+  # Step 3: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one)
   num_offspring_raw <- rnbinom(
     n    = 1,
     mu   = mn_offspring_funeral,
     size = overdisp_offspring_funeral
   )
 
-  # Step 5: Thin the number of infections if the funeral is a safe one
+  # Step 4: Thin the number of infections if the funeral is a safe one
   if (!has_unsafe_funeral) {
     keep_infection <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = 1 - safe_funeral_efficacy))
     num_offspring <- sum(keep_infection)
@@ -176,12 +166,12 @@ offspring_function_funeral <- function(
     return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
-  # Step 6: Generate infection times = outcome time + Gamma distributed 'delay', typically with
+  # Step 5: Generate infection times = outcome time + Gamma distributed 'delay', typically with
   #         little variance to represent a singular point from which infections arose
   delay_funeral <- rgamma(n = num_offspring, shape = Tg_shape_funeral, rate  = Tg_rate_funeral)
   infection_times <- parent_time_to_outcome + delay_funeral
 
-  # Step 7: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
+  # Step 6: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
   #         where prob_hcw_cond_funeral depends on class of the parent
   infection_settings <- rep("funeral", num_offspring)
   offspring_class <- rep("genPop", num_offspring)
@@ -192,7 +182,7 @@ offspring_function_funeral <- function(
     flip_hcw <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hcw_cond_funeral_hcw))
     offspring_class[flip_hcw] <- "HCW"
   } else {
-    stop("Step 7 of funeral offspring function is broken")
+    stop("Step 6 of funeral offspring function is broken")
   }
 
   offspring_df <- data.frame(infection_location = infection_settings,
