@@ -14,56 +14,6 @@
 ##       we approach parameterising this (maybe we put a check in place??)
 ## Note: prob_hospitalised_hcw and prob_hospitalised_genPop - do they need to be made specific to the location of the infection as well?
 
-mn_offspring_genPop = 3
-overdisp_offspring_genPop = 3
-Tg_shape_genPop = 20
-Tg_rate_genPop = 2
-mn_offspring_hcw = 3
-overdisp_offspring_hcw = 3
-Tg_shape_hcw = 20
-Tg_rate_hcw = 2
-mn_offspring_funeral = 5
-overdisp_offspring_funeral = 1
-Tg_shape_funeral = 1000
-Tg_rate_funeral = 100
-incubation_period = function(n) { rgamma(n = n, shape = 5, rate = 2)}
-onset_to_hospitalisation = function(n) { rgamma(n = n, shape = 20, rate = 2) }
-onset_to_death = function(n) { rgamma(n = n, shape = 40, rate = 2)}
-onset_to_recovery = function(n) { rgamma(n = n, shape = 40, rate = 2)}
-hospitalisation_to_death = function(n) { rgamma(n = n, shape = 20, rate = 2)}
-hospitalisation_to_recovery = function(n) { rgamma(n = n, shape = 20, rate = 2)}
-prob_symptomatic = 0.8
-prob_hospitalised_hcw = 0.7
-prob_hospitalised_genPop = 0.7
-prob_death_comm = 0.8
-prob_death_hosp = 0.2
-prob_hcw_cond_genPop_comm = 0.5
-prob_hcw_cond_genPop_hospital = 0.5
-prob_hcw_cond_hcw_comm = 0.5
-prob_hcw_cond_hcw_hospital = 0.5
-prob_hospital_cond_hcw_preAdm = 0.5
-ppe_efficacy_hcw = 0.5
-hospital_quarantine_efficacy = 0.5
-p_unsafe_funeral_comm_hcw = 0.75
-p_unsafe_funeral_hosp_hcw = 0.75
-p_unsafe_funeral_comm_genPop = 0.75
-p_unsafe_funeral_hosp_genPop = 0.75
-safe_funeral_efficacy = 0.9
-prob_hcw_cond_funeral_hcw = 0.5
-prob_hcw_cond_funeral_genPop = 0.5
-tf = Inf
-population = 1e6
-check_final_size = 10000
-initial_immune = 0
-seeding_cases = 10
-susceptible_deplete = FALSE
-seed = 400
-source("R/complete_offspring_info.R")
-source("R/offspring_function_funeral.R")
-source("R/offspring_function_genPop.R")
-source("R/offspring_function_hcw.R")
-source("R/helper_functions.R")
-
 branching_process_main <- function(
 
   ## Transmission
