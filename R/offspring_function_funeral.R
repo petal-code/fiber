@@ -49,21 +49,10 @@
 #'   \code{id}, \code{parent_class}, \code{setting}, \code{time_infection}, \code{class}.
 #'   Returns a 0-row data.frame if no unsafe funeral occurs or zero offspring.
 #' @export
-
 offspring_function_funeral <- function(
 
   ## *Parent* characteristics and properties
-  parent_hospitalised = NULL, ### is the parent hospitalised (yes/no)
-  parent_time_to_hospitalisation = NULL, ### when over the course of the infection was the parent hospitalised
-  parent_time_to_outcome = NULL, ### when does the infection resolve (death or recovered)
-  parent_died = NULL, ### was the outcome at parent_time_to_outcome death? (yes/no)
-  parent_class = NULL,   # "genPop" or "HCW" this matters now because unlike other two functions (although improbable) parent could be either
-
-  ## Funeral occurrence
-  p_unsafe_funeral_comm_hcw = NULL,    ## probability the parent had an unsafe funeral Cond. on a community death and parent class being HCW
-  p_unsafe_funeral_hosp_hcw = NULL,    ## probability parent had an unsafe funeral cond. on a hospital death and parent class being HCW
-  p_unsafe_funeral_comm_genPop = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being genPop
-  p_unsafe_funeral_hosp_genPop = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being genPop
+  parent_info,
 
   ## Offspring distribution for unsafe funeral event
   mn_offspring_funeral = NULL, # mean number of offspring at unsafe funeral
@@ -82,6 +71,14 @@ offspring_function_funeral <- function(
 ) {
 
   ### note: high probability that this is genPop to genPop (which is what we want) but should allow for parent to be HCW
+
+  ## Step 0: Extract parent info
+  parent_hospitalised = parent_info$hospitalisation                          # whether the parent (infector) is hospitalised or not
+  parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
+  parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
+  parent_died = parent_info$outcome                                          # was the outcome at parent_time_to_outcome death? (yes/no)
+  parent_class = parent_info$class                                           # "genPop" or "HCW" this matters now because unlike other two functions (although improbable) parent could be either
+  parent_funeral = parent_info$funeral_safety                                # whether the funeral was safe or not (for those dying)
 
   #########################################################################################
   ## Input checks
@@ -114,19 +111,6 @@ offspring_function_funeral <- function(
       stop("If parent is NOT hospitalised, `parent_time_to_hospitalisation` must be NA.", call. = FALSE)
   }
 
-  # p_unsafe_funeral_comm/hosp
-  for (nm in c("p_unsafe_funeral_comm_hcw", "p_unsafe_funeral_hosp_hcw", "p_unsafe_funeral_comm_genPop", "p_unsafe_funeral_hosp_genPop")) {
-    val <- get(nm, inherits = FALSE)
-    if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1)
-      stop(sprintf("`%s` must be a numeric scalar in [0, 1].", nm), call. = FALSE)
-  }
-
- # safe funeral efficacy
-  if (is.null(safe_funeral_efficacy) || !is.numeric(safe_funeral_efficacy) ||
-      safe_funeral_efficacy < 0 || safe_funeral_efficacy > 1)
-    stop("`safe_funeral_efficacy` must be between 0 and 1.", call. = FALSE)
-
-
   # Other positive parameters
   for (nm in c("mn_offspring_funeral", "overdisp_offspring_funeral",
                "Tg_shape_funeral", "Tg_rate_funeral")) {
@@ -152,35 +136,25 @@ offspring_function_funeral <- function(
 
   # Step 1: Ensure parent is dead. If parent survived, no funeral transmission
   if (!isTRUE(parent_died)) {
-    return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
-                      time_infection=numeric(0), class=character(0), stringsAsFactors=FALSE))
+    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
-  # Step 2: Determine whether death occurred BEFORE hospitalisation (community death) & assign the appropriate probability
-  community_death <- !isTRUE(parent_hospitalised) || (parent_time_to_outcome < parent_time_to_hospitalisation)
-  if (parent_class == "genPop") {
-    p_unsafe_funeral <- if (isTRUE(community_death)) p_unsafe_funeral_comm_genPop else p_unsafe_funeral_hosp_genPop
-  } else if (parent_class == "HCW") {
-    p_unsafe_funeral <- if (isTRUE(community_death)) p_unsafe_funeral_comm_hcw else p_unsafe_funeral_hosp_hcw
-  } else {
-    stop("Step 2 of funeral offspring function is broken")
-  }
-
-  # Step 3: Bernoulli trial for determining whether an unsafe funeral occurs
-  has_unsafe_funeral <- as.logical(rbinom(n = 1, size = 1, prob = p_unsafe_funeral))
+  # Step 2: Information on whether the parent had an unsafe or safe funeral
+  has_unsafe_funeral <- parent_funeral # as.logical(rbinom(n = 1, size = 1, prob = p_unsafe_funeral)) # prev: Bernoulli trial for determining whether an unsafe funeral occurs
+  has_unsafe_funeral <- ifelse(has_unsafe_funeral == "unsafe", TRUE, FALSE)
 
   #########################################################################################
   ## Produce funeral offspring
   #########################################################################################
 
-  # Step 4: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one)
+  # Step 3: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one)
   num_offspring_raw <- rnbinom(
     n    = 1,
     mu   = mn_offspring_funeral,
     size = overdisp_offspring_funeral
   )
 
-  # Step 5: Thin the number of infections if the funeral is a safe one
+  # Step 4: Thin the number of infections if the funeral is a safe one
   if (!has_unsafe_funeral) {
     keep_infection <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = 1 - safe_funeral_efficacy))
     num_offspring <- sum(keep_infection)
@@ -189,18 +163,15 @@ offspring_function_funeral <- function(
   }
 
   if (num_offspring == 0L) {
-    return(data.frame(id=integer(0), parent_class=character(0), setting=character(0),
-                      time_infection=numeric(0), class=character(0), stringsAsFactors=FALSE))
+    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
-  # Step 6: Generate infection times = outcome time + Gamma distributed 'delay', typically with
+  # Step 5: Generate infection times = outcome time + Gamma distributed 'delay', typically with
   #         little variance to represent a singular point from which infections arose
-  delay_funeral <- rgamma(n = num_offspring,
-                          shape = Tg_shape_funeral,
-                          rate  = Tg_rate_funeral)
+  delay_funeral <- rgamma(n = num_offspring, shape = Tg_shape_funeral, rate  = Tg_rate_funeral)
   infection_times <- parent_time_to_outcome + delay_funeral
 
-  # Step 7: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
+  # Step 6: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
   #         where prob_hcw_cond_funeral depends on class of the parent
   infection_settings <- rep("funeral", num_offspring)
   offspring_class <- rep("genPop", num_offspring)
@@ -211,18 +182,12 @@ offspring_function_funeral <- function(
     flip_hcw <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hcw_cond_funeral_hcw))
     offspring_class[flip_hcw] <- "HCW"
   } else {
-    stop("Step 7 of funeral offspring function is broken")
+    stop("Step 6 of funeral offspring function is broken")
   }
 
-  ## Step 8: Output dataframe
-  offspring_df <- data.frame(
-    id             = seq_len(num_offspring),         ## Note: this is going to be indexed from 1:num_offspring - we'll have to change it in the main dataframe
-    parent_class = rep(parent_class, num_offspring), ## note this allows for both
-    setting        = infection_settings,
-    time_infection = infection_times,
-    class          = offspring_class,
-    stringsAsFactors = FALSE
-  )
-
+  offspring_df <- data.frame(infection_location = infection_settings,
+                             time_infection_relative = infection_times,
+                             class = offspring_class,
+                             stringsAsFactors = FALSE)
   return(offspring_df)
 }
