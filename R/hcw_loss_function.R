@@ -23,16 +23,18 @@ hcw_loss <- function(
   ##   - a continuous time (outbreak_end_time_cont)
   ##   - an integer day (outbreak_end_time), using ceiling().
   ##################################################################
+  max_poss_outbreak_end_time <- max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)
 
   if (is.null(outbreak_end_time)) {
 
-    outbreak_end_time <- max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)
+    outbreak_end_time <- max_poss_outbreak_end_time
 
   } else {
 
     ## User-specified continuous end time
-    outbreak_end_time <- outbreak_end_time
-
+    if (!(outbreak_end_time <= max_poss_outbreak_end_time)) {
+      stop("outbreak_end_time must be <= max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)")
+    }
   }
 
   ## Something has gone wrong and we can't determine an end time
