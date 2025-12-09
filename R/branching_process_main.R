@@ -72,7 +72,7 @@ branching_process_main <- function(
   ## Misc
   tf = Inf,
   population,
-  hcw_per_capita,
+  hcw_per_capita = 0,
   check_final_size,
   initial_immune = 0,
   seeding_cases,
@@ -96,6 +96,7 @@ branching_process_main <- function(
   if (hcw_total <= 0) {
     stop("number of hcws is <= 0 as currently specified by hcw_per_capita and population")
   }
+  hcw_available <- hcw_total
 
   ## Preallocate data frame -
   max_cases <- check_final_size
@@ -199,7 +200,8 @@ branching_process_main <- function(
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
-                                                                     prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
+                                                                     prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital,
+                                                                     hcw_available = hcw_available)
     } else if (parent_info$class == "HCW") {
       offspring_community_healthcare_df <- offspring_function_hcw(parent_info = parent_info,
                                                                   mn_offspring_hcw = mn_offspring_hcw,
@@ -210,8 +212,13 @@ branching_process_main <- function(
                                                                   ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                   hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
-                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
+                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital,
+                                                                  hcw_available = hcw_available)
     }
+
+    ## Count HCWs generated and subtract from available pool
+    n_hcw_community_healthcare <- sum(offspring_community_healthcare_df$class == "HCW")
+    hcw_available <- hcw_available - n_hcw_community_healthcare
 
     #############################################################################################
     ### Step 3: Generate offspring associated with funeral transmission
@@ -223,7 +230,11 @@ branching_process_main <- function(
                                                        Tg_rate_funeral = Tg_rate_funeral,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
-                                                       prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
+                                                       prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop,
+                                                       hcw_available = hcw_available)
+    ## Update hcw_available after funeral transmission
+    n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
+    hcw_available <- hcw_available - n_hcw_funeral
 
     #################################################################################################################
     ### Step 4: Complete offspring information based on parent attributes and timings; and update parent information
