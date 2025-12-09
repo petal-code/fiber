@@ -51,13 +51,13 @@ hcw_loss <- function(
   ##   - how many HCWs were ever infected
   ##   - how many HCWs died (outcome == TRUE means death)
   ##################################################################
+  is_hcw <- tdf$class == "HCW" & !is.na(tdf$time_infection_absolute)
+  is_hcw_subset <- is_hcw & subset_vector
 
-  is_hcw <- tdf$class[subset_vector] == "HCW" & !is.na(tdf$time_infection_absolute[subset_vector])
-
-  n_hcw_infected <- sum(is_hcw, na.rm = TRUE)
+  n_hcw_infected <- sum(is_hcw_subset, na.rm = TRUE)
 
   ## outcome == TRUE corresponds to death for this model
-  n_hcw_deaths <- sum(tdf$class[subset_vector] == "HCW" & tdf$outcome[subset_vector], na.rm = TRUE)
+  n_hcw_deaths <- sum(tdf$outcome[is_hcw_subset], na.rm = TRUE)
 
 
   ##################################################################
@@ -81,7 +81,7 @@ hcw_loss <- function(
   if (n_hcw_infected > 0) {
 
     hcw_days_lost <- pmax(
-      outbreak_end_time - tdf$time_infection_absolute[is_hcw],
+      outbreak_end_time - tdf$time_infection_absolute[is_hcw_subset],
       0
     )
 
@@ -109,9 +109,8 @@ hcw_loss <- function(
 
   if (n_hcw_infected > 0) {
 
-    hcw_details <- tdf[is_hcw, c("id", "class", "time_infection_absolute", "outcome")]
+    hcw_details <- tdf[is_hcw_subset, c("id", "class", "time_infection_absolute", "outcome")]
     names(hcw_details)[names(hcw_details) == "outcome"] <- "dead"
-
     hcw_details$hcw_days_lost <- hcw_days_lost
 
     ## Order by infection time then id for readability
