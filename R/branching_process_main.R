@@ -72,6 +72,7 @@ branching_process_main <- function(
   ## Misc
   tf = Inf,
   population,
+  hcw_per_capita,
   check_final_size,
   initial_immune = 0,
   seeding_cases,
@@ -89,6 +90,12 @@ branching_process_main <- function(
 
   ## Initialise the susceptible population
   susc <- population - initial_immune
+
+  ## Initialise the HCW population
+  hcw_total <- round(hcw_per_capita * population)
+  if (hcw_total <= 0) {
+    stop("number of hcws is <= 0 as currently specified by hcw_per_capita and population")
+  }
 
   ## Preallocate data frame -
   max_cases <- check_final_size
