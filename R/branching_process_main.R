@@ -258,7 +258,8 @@ branching_process_main <- function(
                                                        hospitalisation_to_death = hospitalisation_to_death,
                                                        hospitalisation_to_recovery = hospitalisation_to_recovery,
                                                        onset_to_death = onset_to_death,
-                                                       onset_to_recovery = onset_to_recovery)
+                                                       onset_to_recovery = onset_to_recovery,
+                                                       hcw_available = hcw_available)
       tdf$n_offspring[idx] <- nrow(complete_offspring_df)
     } else {
       complete_offspring_df <- tdf[0, , drop = FALSE]
