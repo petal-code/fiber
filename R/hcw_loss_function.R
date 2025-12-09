@@ -1,7 +1,18 @@
 hcw_loss <- function(
     tdf,
+    subset = "realised_subset",
     outbreak_end_time = NULL   # optional: if NULL, taken from tdf
 ) {
+
+  ## Check correct specification of argument "subset"
+  if (!(subset %in% c("total_tdf", "realised_subset"))) {
+    stop("subset must be either total_tdf or realised_subset")
+  }
+  if (subset == "realised_subset") {
+    subset_vector <- tdf$offspring_generated == TRUE
+  } else {
+    subset_vector <- rep(TRUE, nrow(tdf))
+  }
 
   ##################################################################
   ### Step 1: Define the "end of the outbreak"
@@ -15,26 +26,22 @@ hcw_loss <- function(
 
   if (is.null(outbreak_end_time)) {
 
-    outbreak_end_time_cont <- max(
-      c(tdf$time_infection_absolute, tdf$time_outcome_absolute),
+    outbreak_end_time <- max(
+      c(tdf$time_infection_absolute[subset_vector], tdf$time_outcome_absolute[subset_vector]),
       na.rm = TRUE
     )
 
   } else {
 
     ## User-specified continuous end time
-    outbreak_end_time_cont <- outbreak_end_time
+    outbreak_end_time <- outbreak_end_time
 
   }
 
   ## Something has gone wrong and we can't determine an end time
-  if (!is.finite(outbreak_end_time_cont)) {
+  if (!is.finite(outbreak_end_time)) {
     stop("summarise_hcw_impact: could not determine outbreak end time (all times are NA).")
   }
-
-  ## Integer "final day of outbreak" (e.g. day 98 if last event is at 97.6 days)
-  outbreak_end_time_int <- ceiling(outbreak_end_time_cont)
-
 
   ##################################################################
   ### Step 2: Identify HCWs in the transmission tree
@@ -45,12 +52,12 @@ hcw_loss <- function(
   ##   - how many HCWs died (outcome == TRUE means death)
   ##################################################################
 
-  is_hcw <- tdf$class == "HCW" & !is.na(tdf$time_infection_absolute)
+  is_hcw <- tdf$class[subset_vector] == "HCW" & !is.na(tdf$time_infection_absolute[subset_vector])
 
   n_hcw_infected <- sum(is_hcw, na.rm = TRUE)
 
   ## outcome == TRUE corresponds to death for this model
-  n_hcw_deaths <- sum(tdf$class == "HCW" & tdf$outcome, na.rm = TRUE)
+  n_hcw_deaths <- sum(tdf$class[subset_vector] == "HCW" & tdf$outcome[subset_vector], na.rm = TRUE)
 
 
   ##################################################################
@@ -73,27 +80,19 @@ hcw_loss <- function(
 
   if (n_hcw_infected > 0) {
 
-    hcw_days_lost_cont <- pmax(
-      outbreak_end_time_cont - tdf$time_infection_absolute[is_hcw],
+    hcw_days_lost <- pmax(
+      outbreak_end_time - tdf$time_infection_absolute[is_hcw],
       0
     )
-
-    ## Integer days: here we use round() to avoid systematic
-    ## upwards bias from rounding every individual up.
-    ## Replace round() with ceiling() if prefer the
-    ## conservative "partial day = full day" definition.
-    hcw_days_lost_int <- round(hcw_days_lost_cont)
 
   } else {
 
     ## No HCWs infected: return empty vectors
     hcw_days_lost_cont <- numeric(0)
-    hcw_days_lost_int  <- integer(0)
 
   }
 
-  total_hcw_days_lost_cont <- sum(hcw_days_lost_cont)
-  total_hcw_days_lost_int  <- sum(hcw_days_lost_int)
+  total_hcw_days_lost <- sum(round(hcw_days_lost))
 
 
   ##################################################################
@@ -113,7 +112,7 @@ hcw_loss <- function(
     hcw_details <- tdf[is_hcw, c("id", "class", "time_infection_absolute", "outcome")]
     names(hcw_details)[names(hcw_details) == "outcome"] <- "dead"
 
-    hcw_details$hcw_days_lost <- hcw_days_lost_int
+    hcw_details$hcw_days_lost <- hcw_days_lost
 
     ## Order by infection time then id for readability
     hcw_details <- hcw_details[order(hcw_details$time_infection_absolute,
@@ -136,10 +135,10 @@ hcw_loss <- function(
   out <- list(
     n_hcw_infected           = n_hcw_infected,
     n_hcw_deaths             = n_hcw_deaths,
-    outbreak_end_time        = outbreak_end_time_int,    # integer "final day"
-    outbreak_end_time_cont   = outbreak_end_time_cont,   # continuous final time
-    total_hcw_days_lost      = total_hcw_days_lost_int,  # integer total
-    total_hcw_days_lost_cont = total_hcw_days_lost_cont, # continuous total
+    outbreak_end_time        = round(outbreak_end_time),    # integer "final day"
+    outbreak_end_time_cont   = outbreak_end_time,           # continuous final time
+    total_hcw_days_lost      = round(total_hcw_days_lost),  # integer total
+    total_hcw_days_lost_cont = total_hcw_days_lost,         # continuous total
     hcw_details              = hcw_details
   )
 
