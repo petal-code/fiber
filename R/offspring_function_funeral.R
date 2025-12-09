@@ -67,7 +67,10 @@ offspring_function_funeral <- function(
 
   ## HCW vs genPop at funeral
   prob_hcw_cond_funeral_hcw = NULL, ### probability that the unsafe funeral infector infects a HCW
-  prob_hcw_cond_funeral_genPop = NULL
+  prob_hcw_cond_funeral_genPop = NULL,
+
+  ## HCW availability constraint
+  hcw_available = NULL                      # number of uninfected HCWs remaining
 ) {
 
   ### note: high probability that this is genPop to genPop (which is what we want) but should allow for parent to be HCW
@@ -129,6 +132,12 @@ offspring_function_funeral <- function(
       prob_hcw_cond_funeral_genPop < 0 || prob_hcw_cond_funeral_genPop > 1)
     stop("`prob_hcw_cond_funeral_genPop` must be in [0, 1].", call. = FALSE)
 
+  ## Check hcw_available parameter
+  if (is.null(hcw_available) || length(hcw_available) != 1L ||
+      !is.numeric(hcw_available) || is.na(hcw_available) || hcw_available < 0) {
+    stop("`hcw_available` must be a single non-negative numeric value.", call. = FALSE)
+  }
+
 
   #########################################################################################
   ## Logic for whether a safe or unsafe funeral occurs
@@ -183,6 +192,16 @@ offspring_function_funeral <- function(
     offspring_class[flip_hcw] <- "HCW"
   } else {
     stop("Step 6 of funeral offspring function is broken")
+  }
+
+  # Step 7: Cap HCW infections based on hcw_available - if more HCWs were generated than are available, randomly convert excess back to genPop
+  hcw_idx <- which(offspring_class == "HCW")
+  n_hcw_generated <- length(hcw_idx)
+  if (n_hcw_generated > hcw_available) {
+    # Randomly select which HCWs to convert back to genPop
+    n_excess <- n_hcw_generated - hcw_available
+    convert_idx <- sample(hcw_idx, size = n_excess)
+    offspring_class[convert_idx] <- "genPop"
   }
 
   offspring_df <- data.frame(infection_location = infection_settings,
