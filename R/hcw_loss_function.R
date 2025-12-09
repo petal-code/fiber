@@ -26,10 +26,7 @@ hcw_loss <- function(
 
   if (is.null(outbreak_end_time)) {
 
-    outbreak_end_time <- max(
-      c(tdf$time_infection_absolute[subset_vector], tdf$time_outcome_absolute[subset_vector]),
-      na.rm = TRUE
-    )
+    outbreak_end_time <- max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)
 
   } else {
 
@@ -51,7 +48,8 @@ hcw_loss <- function(
   ##   - how many HCWs were ever infected
   ##   - how many HCWs died (outcome == TRUE means death)
   ##################################################################
-  is_hcw <- tdf$class == "HCW" & !is.na(tdf$time_infection_absolute)
+  outbreak_end_time_subset <- (tdf$time_outcome_absolute <= outbreak_end_time)
+  is_hcw <- tdf$class == "HCW" & !is.na(tdf$time_infection_absolute) & outbreak_end_time_subset
   is_hcw_subset <- is_hcw & subset_vector
 
   n_hcw_infected <- sum(is_hcw_subset, na.rm = TRUE)
