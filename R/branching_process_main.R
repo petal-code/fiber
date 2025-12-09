@@ -285,6 +285,11 @@ branching_process_main <- function(
   ############################################################################################
   tdf <- tdf[order(tdf$time_infection_absolute, tdf$id), ]
   rownames(tdf) <- NULL
+
+  attr(tdf, "hcw_total") <- hcw_total
+  attr(tdf, "hcw_infected") <- hcw_total - hcw_available
+  attr(tdf, "hcw_remaining") <- hcw_available
+
   return(tdf)
 }
 
