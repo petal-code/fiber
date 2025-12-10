@@ -1,7 +1,8 @@
 hcw_loss <- function(
     tdf,
     subset = "realised_subset",
-    outbreak_end_time = NULL   # optional: if NULL, taken from tdf
+    outbreak_end_time = NULL,   # optional: if NULL, taken from tdf
+    meta_data = NULL # take output from branching_process_main
 ) {
 
   ## Check correct specification of argument "subset"
@@ -68,7 +69,7 @@ hcw_loss <- function(
   n_hcw_deaths <- sum(tdf$outcome[is_hcw_subset], na.rm = TRUE)
 
   ## Proportion of infected HCWs who die
-  prop_hcw_died <- if (n_hcw_infected > 0) {
+  hcw_cfr <- if (n_hcw_infected > 0) {
     n_hcw_deaths / n_hcw_infected
   } else {
     NA_real_
@@ -85,8 +86,8 @@ hcw_loss <- function(
   ##
   ## We return:
   ##   - hcw_days_lost           : per-HCW continuous days lost
-  ##   - total_hcw_days_lost     : integer total (sum of rounded)
   ##   - total_hcw_days_lost_cont: continuous total (sum of continuous)
+  ##   - total_hcw_days_lost     : rounded continuous
   ##################################################################
 
   if (n_hcw_infected > 0) {
@@ -104,10 +105,47 @@ hcw_loss <- function(
   }
 
   total_hcw_days_lost_cont <- sum(hcw_days_lost)
-  total_hcw_days_lost      <- sum(round(hcw_days_lost))
+  total_hcw_days_lost      <- round(total_hcw_days_lost_cont)
+
+
+
+  #################################################################
+  ### step 4: Scenario-specific measures
+
+
+  ## Scenario-level derived measures (if meta_data provided)
+  if (!is.null(meta_data) &&
+      !is.null(meta_data$hcw_total) &&
+      !is.null(meta_data$population) &&
+      is.finite(meta_data$hcw_total) && meta_data$hcw_total > 0 &&
+      is.finite(meta_data$population) && meta_data$population > 0) {
+
+    ## proportion of total HCW stock that died
+    prop_hcw_died_total <- n_hcw_deaths / meta_data$hcw_total
+
+    ### proportion hcw deaths relative to total population
+    hcw_deaths_per_1000_pop <- n_hcw_deaths / meta_data$population * 1000
+
+    ## proportion of potential HCW-days lost:
+    ## potential days = hcw_total * outbreak length (integer days)
+    prop_potential_hcw_days_lost <- total_hcw_days_lost_cont /
+      (meta_data$hcw_total * round(outbreak_end_time))
+
+  } else {
+
+    prop_hcw_died_total        <- NA_real_
+    hcw_deaths_per_1000_pop    <- NA_real_
+    prop_potential_hcw_days_lost <- NA_real_
+
+
+  }
+
+
+
+
 
   ##################################################################
-  ### Step 4: Construct per-HCW summary dataframe
+  ### Step 5: Construct per-HCW summary dataframe
 
   ## For downstream diagnostics / plotting, we return a small
   ## dataframe with:
@@ -147,7 +185,13 @@ hcw_loss <- function(
     ## HCW counts
     n_hcw_infected           = n_hcw_infected,
     n_hcw_deaths             = n_hcw_deaths,
-    prop_hcw_died            = prop_hcw_died,
+    hcw_cfr                  = hcw_cfr,
+
+    ### proportions ###
+
+    prop_hcw_died_total       = prop_hcw_died_total,      # proportion of total HCW who died
+    hcw_deaths_per_1000_pop   = hcw_deaths_per_1000_pop,
+    prop_potential_hcw_days_lost = prop_potential_hcw_days_lost, ## proportion of HCW_days_lost
 
     ## Overall outbreak timing
     outbreak_end_time        = round(outbreak_end_time),    # integer "final day"
