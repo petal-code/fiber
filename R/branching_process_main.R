@@ -72,7 +72,7 @@ branching_process_main <- function(
   ## Misc
   tf = Inf,
   population,
-  hcw_per_capita = 0,
+  hcw_per_capita = 10,
   check_final_size,
   initial_immune = 0,
   seeding_cases,
