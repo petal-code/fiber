@@ -16,14 +16,14 @@ hcw_loss <- function(
 
   ##################################################################
   ### Step 1: Define the "end of the outbreak"
+
+  ## By default we take this as the latest observed outcome time in the
+  ## transmission tree, within the chosen subset.
   ##################################################################
-  ## By default we take this as the latest observed time in the
-  ## transmission tree (either infection or outcome time).
-  ## We keep BOTH:
-  ##   - a continuous time (outbreak_end_time_cont)
-  ##   - an integer day (outbreak_end_time), using ceiling().
-  ##################################################################
-  max_poss_outbreak_end_time <- max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)
+  max_poss_outbreak_end_time <- max(
+    tdf$time_outcome_absolute[subset_vector],
+    na.rm = TRUE
+  )
 
   if (is.null(outbreak_end_time)) {
 
@@ -31,7 +31,8 @@ hcw_loss <- function(
 
   } else {
 
-    ## User-specified continuous end time
+    ## User-specified continuous end time must not exceed the latest
+    ## observed outcome time.
     if (!(outbreak_end_time <= max_poss_outbreak_end_time)) {
       stop("outbreak_end_time must be <= max(c(tdf$time_outcome_absolute[subset_vector]), na.rm = TRUE)")
     }
@@ -39,19 +40,26 @@ hcw_loss <- function(
 
   ## Something has gone wrong and we can't determine an end time
   if (!is.finite(outbreak_end_time)) {
-    stop("summarise_hcw_impact: could not determine outbreak end time (all times are NA).")
+    stop("hcw_loss: could not determine outbreak end time (all times are NA).")
   }
 
   ##################################################################
   ### Step 2: Identify HCWs in the transmission tree
-  ##################################################################
+
   ## HCWs are defined as those with class == "HCW" and a known
-  ## infection time. We count:
-  ##   - how many HCWs were ever infected
-  ##   - how many HCWs died (outcome == TRUE means death)
+  ## infection time, whose outcome occurs on/before the end of the
+  ## outbreak, and who are included in the chosen subset.
+  ##
+  ## We count:
+  ##   - how many HCWs were ever infected (n_hcw_infected)
+  ##   - how many HCWs died (n_hcw_deaths; outcome == TRUE)
   ##################################################################
   outbreak_end_time_subset <- (tdf$time_outcome_absolute <= outbreak_end_time)
-  is_hcw <- tdf$class == "HCW" & !is.na(tdf$time_infection_absolute) & outbreak_end_time_subset
+
+  is_hcw <- tdf$class == "HCW" &
+    !is.na(tdf$time_infection_absolute) &
+    outbreak_end_time_subset
+
   is_hcw_subset <- is_hcw & subset_vector
 
   n_hcw_infected <- sum(is_hcw_subset, na.rm = TRUE)
@@ -59,23 +67,26 @@ hcw_loss <- function(
   ## outcome == TRUE corresponds to death for this model
   n_hcw_deaths <- sum(tdf$outcome[is_hcw_subset], na.rm = TRUE)
 
+  ## Proportion of infected HCWs who die
+  prop_hcw_died <- if (n_hcw_infected > 0) {
+    n_hcw_deaths / n_hcw_infected
+  } else {
+    NA_real_
+  }
 
   ##################################################################
   ### Step 3: Compute HCW-days lost
-  ##################################################################
+
   ## Definition (for each HCW i):
-  ##   HCW-days-lost_i = outbreak_end_time_cont - time_infection_absolute_i
+  ##   HCW-days-lost_i = outbreak_end_time - time_infection_absolute_i
   ##
   ## i.e. we assume HCWs cease to provide care from the time they are
   ## infected until the end of the outbreak.
   ##
-  ## We do this in two ways:
-  ##   - continuous (hcw_days_lost_cont)
-  ##   - integer days (hcw_days_lost_int), using round().
-  ##
-  ## If we want a more conservative definition ("any fraction of a
-  ## day counts as a full day lost"), we can swap round() for
-  ## ceiling() below.
+  ## We return:
+  ##   - hcw_days_lost           : per-HCW continuous days lost
+  ##   - total_hcw_days_lost     : integer total (sum of rounded)
+  ##   - total_hcw_days_lost_cont: continuous total (sum of continuous)
   ##################################################################
 
   if (n_hcw_infected > 0) {
@@ -87,29 +98,31 @@ hcw_loss <- function(
 
   } else {
 
-    ## No HCWs infected: return empty vectors
-    hcw_days_lost_cont <- numeric(0)
+    ## No HCWs infected: return empty vector
+    hcw_days_lost <- numeric(0)
 
   }
 
-  total_hcw_days_lost <- sum(round(hcw_days_lost))
-
+  total_hcw_days_lost_cont <- sum(hcw_days_lost)
+  total_hcw_days_lost      <- sum(round(hcw_days_lost))
 
   ##################################################################
   ### Step 4: Construct per-HCW summary dataframe
-  ##################################################################
+
   ## For downstream diagnostics / plotting, we return a small
   ## dataframe with:
-  ##   - id          : individual id in the transmission tree
-  ##   - class       : should always be "HCW" here
+  ##   - id              : individual id in the transmission tree
+  ##   - class           : should always be "HCW" here
   ##   - time_infection_absolute
-  ##   - dead        : logical, TRUE if this HCW died (outcome == TRUE)
-  ##   - hcw_days_lost : integer HCW-days lost for this HCW
+  ##   - dead            : logical, TRUE if this HCW died (outcome == TRUE)
+  ##   - hcw_days_lost   : continuous HCW-days lost for this HCW
   ##################################################################
 
   if (n_hcw_infected > 0) {
 
-    hcw_details <- tdf[is_hcw_subset, c("id", "class", "time_infection_absolute", "outcome")]
+    hcw_details <- tdf[is_hcw_subset,
+                       c("id", "class", "time_infection_absolute", "outcome")]
+
     names(hcw_details)[names(hcw_details) == "outcome"] <- "dead"
     hcw_details$hcw_days_lost <- hcw_days_lost
 
@@ -121,23 +134,30 @@ hcw_loss <- function(
   } else {
 
     hcw_details <- tdf[0, c("id", "class", "time_infection_absolute"), drop = FALSE]
-    hcw_details$dead           <- logical(0)
-    hcw_details$hcw_days_lost  <- integer(0)
+    hcw_details$dead          <- logical(0)
+    hcw_details$hcw_days_lost <- numeric(0)
 
   }
 
-
   ##################################################################
-  ### Step 5: Return summary as a list (for easy extraction)
+  ### Step 5: Return summary as a list
   ##################################################################
 
   out <- list(
+    ## HCW counts
     n_hcw_infected           = n_hcw_infected,
     n_hcw_deaths             = n_hcw_deaths,
+    prop_hcw_died            = prop_hcw_died,
+
+    ## Overall outbreak timing
     outbreak_end_time        = round(outbreak_end_time),    # integer "final day"
     outbreak_end_time_cont   = outbreak_end_time,           # continuous final time
-    total_hcw_days_lost      = round(total_hcw_days_lost),  # integer total
-    total_hcw_days_lost_cont = total_hcw_days_lost,         # continuous total
+
+    ## HCW-days lost
+    total_hcw_days_lost      = total_hcw_days_lost,         # integer total
+    total_hcw_days_lost_cont = total_hcw_days_lost_cont,    # continuous total
+
+    ## Per-HCW details
     hcw_details              = hcw_details
   )
 
