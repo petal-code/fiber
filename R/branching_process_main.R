@@ -293,7 +293,7 @@ branching_process_main <- function(
 
   out <- list(
     tdf = tdf,
-    meta_data = list(
+    sim_info = list(
       population     = population,
       hcw_per_capita = hcw_per_capita,
       hcw_total      = hcw_total,

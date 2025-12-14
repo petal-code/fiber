@@ -1,8 +1,8 @@
 hcw_loss <- function(
-    tdf,
+    tdf, # takes output from branching_process_main
     subset = "realised_subset",
     outbreak_end_time = NULL,   # optional: if NULL, taken from tdf
-    meta_data = NULL # take output from branching_process_main
+    sim_info = NULL # takes summary of inputs to branching_process_main for given simulation
 ) {
 
   ## Check correct specification of argument "subset"
@@ -55,7 +55,9 @@ hcw_loss <- function(
   ##   - how many HCWs were ever infected (n_hcw_infected)
   ##   - how many HCWs died (n_hcw_deaths; outcome == TRUE)
   ##################################################################
-  outbreak_end_time_subset <- (tdf$time_outcome_absolute <= outbreak_end_time)
+  outbreak_end_time_subset <- !is.na(tdf$time_outcome_absolute) &
+    tdf$time_outcome_absolute <= outbreak_end_time
+
 
   is_hcw <- tdf$class == "HCW" &
     !is.na(tdf$time_infection_absolute) &
@@ -113,26 +115,34 @@ hcw_loss <- function(
   ### step 4: Scenario-specific measures
 
 
-  ## Scenario-level derived measures (if meta_data provided)
-  if (!is.null(meta_data) &&
-      !is.null(meta_data$hcw_total) &&
-      !is.null(meta_data$population) &&
-      is.finite(meta_data$hcw_total) && meta_data$hcw_total > 0 &&
-      is.finite(meta_data$population) && meta_data$population > 0) {
+  ## Scenario-level derived measures (if sim_info provided)
+  if (!is.null(sim_info) &&
+      !is.null(sim_info$hcw_total) &&
+      !is.null(sim_info$population) &&
+      is.finite(sim_info$hcw_total) && sim_info$hcw_total > 0 &&
+      is.finite(sim_info$population) && sim_info$population > 0) {
+
+
+    ## total HCWs and potential HCW-days
+    total_hcw      <- sim_info$hcw_total
+    total_hcw_days <- sim_info$hcw_total * round(outbreak_end_time)
 
     ## proportion of total HCW stock that died
-    prop_hcw_died_total <- n_hcw_deaths / meta_data$hcw_total
+    prop_hcw_died_total <- n_hcw_deaths / total_hcw
 
     ### proportion hcw deaths relative to total population
-    hcw_deaths_per_1000_pop <- n_hcw_deaths / meta_data$population * 1000
+    hcw_deaths_per_1000_pop <- n_hcw_deaths / sim_info$population * 1000
 
     ## proportion of potential HCW-days lost:
-    ## potential days = hcw_total * outbreak length (integer days)
-    prop_potential_hcw_days_lost <- total_hcw_days_lost_cont /
-      (meta_data$hcw_total * round(outbreak_end_time))
+    prop_potential_hcw_days_lost <- if (total_hcw_days > 0) {
+      total_hcw_days_lost_cont / total_hcw_days
+    } else {
+      NA_real_
+    }
 
   } else {
-
+    total_hcw                  <- NA_real_
+    total_hcw_days             <- NA_real_
     prop_hcw_died_total        <- NA_real_
     hcw_deaths_per_1000_pop    <- NA_real_
     prop_potential_hcw_days_lost <- NA_real_
@@ -178,11 +188,16 @@ hcw_loss <- function(
   }
 
   ##################################################################
-  ### Step 5: Return summary as a list
+  ### Step 6: Return summary as a list
   ##################################################################
 
   out <- list(
-    ## HCW counts
+
+    ### HCW stock
+    total_hcw                = total_hcw,
+    total_hcw_days           = total_hcw_days,
+
+    ### HCW counts
     n_hcw_infected           = n_hcw_infected,
     n_hcw_deaths             = n_hcw_deaths,
     hcw_cfr                  = hcw_cfr,
