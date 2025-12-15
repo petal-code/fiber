@@ -291,6 +291,16 @@ branching_process_main <- function(
   attr(tdf, "hcw_infected") <- hcw_total - hcw_available
   attr(tdf, "hcw_remaining") <- hcw_available
 
-  return(tdf)
+  out <- list(
+    tdf = tdf,
+    sim_info = list(
+      population     = population,
+      hcw_per_capita = hcw_per_capita,
+      hcw_total      = hcw_total,
+      seed           = seed
+    )
+  )
+
+  return(out)
 }
 
