@@ -105,8 +105,8 @@ summarise_output <- function(
   ##--------------------------------------------------------------
   ## 4. Transmission setting breakdown (community / hospital / funeral)
   ##--------------------------------------------------------------
-  if (!is.null(tdf$outcome_location)) {
-    setting_vec <- tdf$outcome_location
+  if (!is.null(tdf$infection_location)) {
+    setting_vec <- tdf$infection_location
 
     n_comm    <- sum(setting_vec == "community" & subset_vector, na.rm = TRUE)
     n_hosp    <- sum(setting_vec == "hospital"  & subset_vector, na.rm = TRUE)
