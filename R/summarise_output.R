@@ -105,10 +105,8 @@ summarise_output <- function(
   ##--------------------------------------------------------------
   ## 4. Transmission setting breakdown (community / hospital / funeral)
   ##--------------------------------------------------------------
-  ## Assume tdf$setting contains strings like "community", "hospital",
-  ## "funeral". If not present, we just skip this bit.
-  if (!is.null(tdf$setting)) {
-    setting_vec <- tdf$setting
+  if (!is.null(tdf$outcome_location)) {
+    setting_vec <- tdf$outcome_location
 
     n_comm    <- sum(setting_vec == "community" & subset_vector, na.rm = TRUE)
     n_hosp    <- sum(setting_vec == "hospital"  & subset_vector, na.rm = TRUE)
@@ -168,3 +166,4 @@ summarise_output <- function(
 
   return(out)
 }
+
