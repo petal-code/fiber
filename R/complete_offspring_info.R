@@ -31,11 +31,19 @@ complete_offspring_info <- function(
     hospitalisation_to_death,            ## between hospitalisation and death (in those dying in hospital)
     hospitalisation_to_recovery,         ## between hospitalisation and recovery (in those recovering in hospital)
     onset_to_death,                      ## between symptom onset and death (for those dying in community)
-    onset_to_recovery                    ## between symptom onset and recovery (for those recovering in community)
+    onset_to_recovery,                   ## between symptom onset and recovery (for those recovering in community)
+
+    ## HCW availability - affects whether hospitalisation is possible
+    hcw_available = NULL                 ## number of uninfected HCWs remaining; if 0, no hospitalisation possible
 )
 {
 
   ## Step 0: Calculating some probabilities and other variables we'll need below
+  ##    If no HCWs are available, healthcare system cannot function - no hospitalisation possible
+  if (!is.null(hcw_available) && hcw_available == 0) {
+    prob_hospitalised_hcw <- 0
+    prob_hospitalised_genPop <- 0
+  }
   prob_hosp_given_symptoms_hcw <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_hcw, prob_symptomatic = prob_symptomatic)       # calculate prob_hosp given some asymptomatic fraction who never need healthcare
   prob_hosp_given_symptoms_genPop <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_genPop, prob_symptomatic = prob_symptomatic) # calculate prob_hosp given some asymptomatic fraction who never need healthcare
   prob_death_given_symptoms_comm <- prob_death_given_symptoms(prob_death = prob_death_comm, prob_symptomatic = prob_symptomatic)
