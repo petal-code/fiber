@@ -72,7 +72,7 @@ branching_process_main <- function(
   ## Misc
   tf = Inf,
   population,
-  hcw_per_capita = 10,
+  hcw_per_capita = 0.05,
   check_final_size,
   initial_immune = 0,
   seeding_cases,
@@ -94,7 +94,10 @@ branching_process_main <- function(
   ## Initialise the HCW population
   hcw_total <- round(hcw_per_capita * population)
   if (hcw_total <= 0) {
-    stop("number of hcws is <= 0 as currently specified by hcw_per_capita and population")
+    warning("hcw_per_capita * population rounds to 0 HCWs (hcw_per_capita = ",
+            hcw_per_capita, ", population = ", population,
+            "). Setting hcw_total to 1 to avoid division-by-zero issues.")
+    hcw_total <- 1L
   }
   hcw_available <- hcw_total
 
