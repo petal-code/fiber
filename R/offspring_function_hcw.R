@@ -149,8 +149,10 @@ offspring_function_hcw <- function(
   n_hcw_generated <- length(hcw_idx)
   if (n_hcw_generated > hcw_available) {
     # Randomly select which HCWs to convert back to genPop
+    # Note: use sample.int() with indexing to avoid R's sample() single-value gotcha
+    # where sample(n, size=k) samples from 1:n instead of c(n) when length(n)==1
     n_excess <- n_hcw_generated - hcw_available
-    convert_idx <- sample(hcw_idx, size = n_excess)
+    convert_idx <- hcw_idx[sample.int(n_hcw_generated, size = n_excess)]
     offspring_class[convert_idx] <- "genPop"
   }
 
