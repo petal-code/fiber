@@ -116,16 +116,47 @@ offspring_function_genPop <- function(
   flip_hcw <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hcw))
   offspring_class[flip_hcw] <- "HCW"
 
-  # Step 6: Cap HCW infections based on hcw_available - if more HCWs were generated than available, randomly convert excess back to genPop
+  # Step 6: Cap HCW infections based on hcw_available.
+  # Setting-aware depletion logic:
+  #   - Hospital-setting HCW infections are DROPPED (removed) when no HCWs are available,
+  #     because nosocomial transmission requires HCWs to be present and working.
+  #   - Community-setting HCW infections are CONVERTED to genPop when no HCWs are available,
+  #     representing the assumption that informal carers replace HCWs in the community.
   hcw_idx <- which(offspring_class == "HCW")
   n_hcw_generated <- length(hcw_idx)
   if (n_hcw_generated > hcw_available) {
-    # Randomly select which HCWs to convert back to genPop
-    # Note: use sample.int() with indexing to avoid R's sample() single-value gotcha
-    # where sample(n, size=k) samples from 1:n instead of c(n) when length(n)==1
     n_excess <- n_hcw_generated - hcw_available
-    convert_idx <- hcw_idx[sample.int(n_hcw_generated, size = n_excess)]
-    offspring_class[convert_idx] <- "genPop"
+
+    # Separate excess HCWs by setting: hospital vs community
+    hcw_settings <- infection_settings[hcw_idx]
+    hospital_hcw_idx <- hcw_idx[hcw_settings == "hospital"]
+    community_hcw_idx <- hcw_idx[hcw_settings == "community"]
+
+    # Priority: drop hospital HCW infections first (they can't happen without HCWs present)
+    n_hospital_to_drop <- min(length(hospital_hcw_idx), n_excess)
+    if (n_hospital_to_drop > 0) {
+      # Note: use sample.int() with indexing to avoid R's sample() single-value gotcha
+      # where sample(n, size=k) samples from 1:n instead of c(n) when length(n)==1
+      drop_idx <- hospital_hcw_idx[sample.int(length(hospital_hcw_idx), size = n_hospital_to_drop)]
+    } else {
+      drop_idx <- integer(0)
+    }
+
+    # Convert remaining excess from community HCWs to genPop
+    n_community_to_convert <- n_excess - n_hospital_to_drop
+    if (n_community_to_convert > 0) {
+      convert_idx <- community_hcw_idx[sample.int(length(community_hcw_idx), size = n_community_to_convert)]
+      offspring_class[convert_idx] <- "genPop"
+    }
+
+    # Build keep mask: drop the hospital HCW infections that exceed capacity
+    keep_mask <- rep(TRUE, length(offspring_class))
+    if (length(drop_idx) > 0) {
+      keep_mask[drop_idx] <- FALSE
+    }
+    infection_times <- infection_times[keep_mask]
+    infection_settings <- infection_settings[keep_mask]
+    offspring_class <- offspring_class[keep_mask]
   }
 
   # Step 7: Define and output dataframe with the results
