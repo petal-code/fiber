@@ -72,7 +72,7 @@ branching_process_main <- function(
   ## Misc
   tf = Inf,
   population,
-  hcw_per_capita = 0.05,
+  hcw_per_capita = 0.05,  # HCWs per capita (per person); e.g. 0.05 = 50 HCWs per 1000 population
   check_final_size,
   initial_immune = 0,
   seeding_cases,
@@ -92,6 +92,7 @@ branching_process_main <- function(
   susc <- population - initial_immune
 
   ## Initialise the HCW population
+  ## hcw_per_capita is the number of HCWs per person (e.g. 0.05 = 5 HCWs per 100 people)
   hcw_total <- round(hcw_per_capita * population)
   if (hcw_total <= 0) {
     warning("hcw_per_capita * population rounds to 0 HCWs (hcw_per_capita = ",

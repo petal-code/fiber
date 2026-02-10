@@ -194,11 +194,13 @@ offspring_function_funeral <- function(
     stop("Step 6 of funeral offspring function is broken")
   }
 
-  # Step 7: Cap HCW infections based on hcw_available - if more HCWs were generated than are available, randomly convert excess back to genPop
+  # Step 7: Cap HCW infections based on hcw_available.
+  # Setting-aware depletion logic: funeral is a non-hospital setting, so excess
+  # HCW infections are CONVERTED to genPop (not dropped). This represents the
+  # assumption that informal carers replace HCWs in community/funeral contexts.
   hcw_idx <- which(offspring_class == "HCW")
   n_hcw_generated <- length(hcw_idx)
   if (n_hcw_generated > hcw_available) {
-    # Randomly select which HCWs to convert back to genPop
     # Note: use sample.int() with indexing to avoid R's sample() single-value gotcha
     # where sample(n, size=k) samples from 1:n instead of c(n) when length(n)==1
     n_excess <- n_hcw_generated - hcw_available
