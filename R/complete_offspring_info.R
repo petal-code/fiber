@@ -28,6 +28,7 @@ complete_offspring_info <- function(
     ## Delay distributions
     incubation_period,                   ## between infection occurring and symptoms occurring (in symptomatic individuals)
     onset_to_hospitalisation,            ## between symptom onset and hospitalisation
+    hospitalisation_delay_factor = 1.0,  ## scalar or function(t): multiplier on onset_to_hospitalisation draws
     hospitalisation_to_death,            ## between hospitalisation and death (in those dying in hospital)
     hospitalisation_to_recovery,         ## between hospitalisation and recovery (in those recovering in hospital)
     onset_to_death,                      ## between symptom onset and death (for those dying in community)
@@ -35,9 +36,23 @@ complete_offspring_info <- function(
 )
 {
 
+  ## Validation: prob_hospitalised_genPop must be a scalar in [0,1] or a function
+  if (!is.function(prob_hospitalised_genPop)) {
+    if (!is.numeric(prob_hospitalised_genPop) || length(prob_hospitalised_genPop) != 1L ||
+        is.na(prob_hospitalised_genPop) || prob_hospitalised_genPop < 0 || prob_hospitalised_genPop > 1) {
+      stop("`prob_hospitalised_genPop` must be a function(t) or a single numeric in [0, 1].", call. = FALSE)
+    }
+  }
+  ## Validation: hospitalisation_delay_factor must be a positive scalar or a function
+  if (!is.function(hospitalisation_delay_factor)) {
+    if (!is.numeric(hospitalisation_delay_factor) || length(hospitalisation_delay_factor) != 1L ||
+        is.na(hospitalisation_delay_factor) || hospitalisation_delay_factor <= 0) {
+      stop("`hospitalisation_delay_factor` must be a function(t) or a single positive numeric.", call. = FALSE)
+    }
+  }
+
   ## Step 0: Calculating some probabilities and other variables we'll need below
   prob_hosp_given_symptoms_hcw <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_hcw, prob_symptomatic = prob_symptomatic)       # calculate prob_hosp given some asymptomatic fraction who never need healthcare
-  prob_hosp_given_symptoms_genPop <- prob_hosp_given_symptoms(prob_hosp = prob_hospitalised_genPop, prob_symptomatic = prob_symptomatic) # calculate prob_hosp given some asymptomatic fraction who never need healthcare
   prob_death_given_symptoms_comm <- prob_death_given_symptoms(prob_death = prob_death_comm, prob_symptomatic = prob_symptomatic)
 
   ################################################################################################################################
@@ -52,17 +67,42 @@ complete_offspring_info <- function(
   offspring_time_symptom_onset <- rep(NA_real_, num_offspring)
   offspring_time_symptom_onset[offspring_symptomatic] <- offspring_incubation_period[offspring_symptomatic]   ## populating vector of symptom onset times with incubation period for symptomatic offspring
 
+  ## Compute absolute time of symptom onset for each offspring (used as "clock" for time-varying parameters)
+  offspring_absolute_symptom_time <- parent_info$time_infection_absolute + offspring_incubation_period
+
   ################################################################################################################################
   ## Step 2: Deciding whether symptomatic offspring are potentially hospitalised
   ##  - In this section, we calculate the potential hospitalisation status for the (symptomatic) offspring cases, i.e. whether they would
   ##    all other factors notwithstanding, visit hospital. In the subsequent section, we will see whether they are *actually* hospitalised
   ##    (i.e. check they don't die/recover before they would) otherwise be hospitalised.
   ################################################################################################################################
-  prob_hosp <- ifelse(offspring_dataframe$class[offspring_symptomatic] == "HCW", prob_hosp_given_symptoms_hcw, prob_hosp_given_symptoms_genPop) # for symptomatic infections, setting class (HCW vs genPop) specific probability of hospitalisation
+  ## For each symptomatic offspring, determine hospitalisation probability
+  symptomatic_indices <- which(offspring_symptomatic)
+  prob_hosp <- numeric(length(symptomatic_indices))
+
+  for (i in seq_along(symptomatic_indices)) {
+    si <- symptomatic_indices[i]
+    if (offspring_dataframe$class[si] == "HCW") {
+      prob_hosp[i] <- prob_hosp_given_symptoms_hcw
+    } else {
+      ## Resolve time-varying prob_hospitalised_genPop at this offspring's symptom onset
+      t_onset <- offspring_absolute_symptom_time[si]
+      p_hosp_t <- resolve_time_varying(prob_hospitalised_genPop, t_onset, "prob_hospitalised_genPop")
+      prob_hosp_given_symp_t <- prob_hosp_given_symptoms(prob_hosp = p_hosp_t, prob_symptomatic = prob_symptomatic)
+      prob_hosp[i] <- prob_hosp_given_symp_t
+    }
+  }
+
   offspring_potentially_hosp <- rep(FALSE, num_offspring)
   offspring_potentially_hosp[offspring_symptomatic] <- as.logical(rbinom(n = sum(offspring_symptomatic), size = 1, prob = prob_hosp)) # assigning potential hospitalisation status; asymptomatics aren't hospitalised, so only update vector for symptomatics
   offspring_potentially_hosp_time <- rep(NA_real_, num_offspring)
-  offspring_potentially_hosp_time[offspring_potentially_hosp] <- onset_to_hospitalisation(n = sum(offspring_potentially_hosp)) # assigning potential hospitalisation time; asymptomatics aren't hospitalised, so only update vector for symptomatics
+  ## Draw raw hospitalisation delays and apply time-varying delay factor
+  raw_hosp_delays <- onset_to_hospitalisation(n = sum(offspring_potentially_hosp))
+  hosp_indices <- which(offspring_potentially_hosp)
+  delay_factors <- vapply(hosp_indices, function(i) {
+    resolve_time_varying(hospitalisation_delay_factor, offspring_absolute_symptom_time[i], "hospitalisation_delay_factor")
+  }, numeric(1))
+  offspring_potentially_hosp_time[offspring_potentially_hosp] <- raw_hosp_delays * delay_factors
 
   ################################################################################################################################
   ## Step 3: Deciding on the outcome for the offspring cases, and if so, when that outcome occurs

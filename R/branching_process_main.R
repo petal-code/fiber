@@ -33,6 +33,7 @@ branching_process_main <- function(
   ## Natural history
   incubation_period,              # DESCRIPTION HERE
   onset_to_hospitalisation,    # DESCRIPTION HERE
+  hospitalisation_delay_factor = 1.0,   # scalar or function(t): multiplier on onset_to_hospitalisation draws
   onset_to_death,
   onset_to_recovery,
   hospitalisation_to_death,              # Note: Jacob to look up whether the time -> death is the same typically as time -> recovery (or do they need to be different)
@@ -255,6 +256,7 @@ branching_process_main <- function(
                                                        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
                                                        incubation_period = incubation_period,
                                                        onset_to_hospitalisation = onset_to_hospitalisation,
+                                                       hospitalisation_delay_factor = hospitalisation_delay_factor,
                                                        hospitalisation_to_death = hospitalisation_to_death,
                                                        hospitalisation_to_recovery = hospitalisation_to_recovery,
                                                        onset_to_death = onset_to_death,
