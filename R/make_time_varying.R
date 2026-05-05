@@ -12,8 +12,8 @@
 #'   interpolation, or `"constant"` for a left-continuous step function
 #'   (each value holds until the next breakpoint).
 #'
-#' @return A function `f(t)` that accepts a single numeric time and returns the
-#'   interpolated or stepped value. Values are clamped to `values[1]` for
+#' @return A function `f(t)` that accepts one or more numeric times and returns the
+#'   interpolated or stepped value(s). Values are clamped to `values[1]` for
 #'   `t < min(times)` and `values[length(values)]` for `t > max(times)`.
 #'   The returned function has class `c("time_varying_fn", "function")`.
 #'
@@ -24,6 +24,7 @@
 #'   values = c(0.05, 0.1, 0.3, 0.5)
 #' )
 #' prob_hosp(20)
+#' prob_hosp(c(10, 20, 40))
 #'
 #' # Step function: constant between changepoints
 #' prob_hosp_step <- make_time_varying(

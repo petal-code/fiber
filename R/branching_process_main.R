@@ -41,8 +41,8 @@ branching_process_main <- function(
 
   # Disease severity and healthcare seeking
   prob_symptomatic = NULL,
-  prob_hospitalised_hcw = NULL,      # Do these need to be made both individual (hcw vs genPop) and context of where the infection originates (community vs healthcare) specific??
-  prob_hospitalised_genPop = NULL,   # Do these need to be made both individual (hcw vs genPop) and context of where the infection originates (community vs healthcare) specific??
+  prob_hospitalised_hcw = NULL,      # scalar or function(t): probability a HCW is hospitalised
+  prob_hospitalised_genPop = NULL,   # scalar or function(t): probability a genPop is hospitalised
   prob_death_comm = NULL,
   prob_death_hosp = NULL,
 
@@ -56,14 +56,14 @@ branching_process_main <- function(
 
   ## Setting model for HCWs
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that an infection generated prior to parent hospitaliation occurs in the hospital (whilst HCW is working)
-  ppe_efficacy_hcw = NULL,                  # efficacy of PPE/IPC measures at reducing transmission (i.e. pre hospitalisation)
-  hospital_quarantine_efficacy = NULL,      # efficacy of quarantine at reducing transmission (i.e. post hospitalisation)
+  ppe_efficacy_hcw = NULL,                  # scalar or function(t): efficacy of PPE/IPC measures at reducing transmission (i.e. pre hospitalisation)
+  hospital_quarantine_efficacy = NULL,      # scalar or function(t): efficacy of quarantine/ETU care at reducing post-hospitalisation transmission
 
   ## Funeral occurrence
-  p_unsafe_funeral_comm_hcw = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being HCW
-  p_unsafe_funeral_hosp_hcw = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being HCW
-  p_unsafe_funeral_comm_genPop = NULL, ## probability the parent had an unsafe funeral Cond. on a community death and parent class being genPop
-  p_unsafe_funeral_hosp_genPop = NULL, ## probability parent had an unsafe funeral cond. on a hospital death and parent class being genPop
+  p_unsafe_funeral_comm_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, HCW
+  p_unsafe_funeral_hosp_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a hospital death, HCW
+  p_unsafe_funeral_comm_genPop = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, genPop
+  p_unsafe_funeral_hosp_genPop = NULL, ## scalar or function(t): probability of unsafe funeral after a hospital death, genPop
   safe_funeral_efficacy = NULL, ## efficacy of a safe burial in reducing transmission in a funeral setting
 
   ## HCW vs genPop at funeral
@@ -88,6 +88,18 @@ branching_process_main <- function(
   ##################################################################
   # Set seed for reproducibility
   set.seed(seed)
+
+  ## Local helpers for resolving parameters that can be either scalars or
+  ## functions of calendar time. These mirror the logic in complete_offspring_info
+  ## because some time-varying parameters are needed before offspring are created.
+  resolve_probability <- function(param, t, param_name) {
+    value <- resolve_time_varying(param = param, t = t, param_name = param_name)
+    if (any(value < 0 | value > 1)) {
+      stop(sprintf("`%s` must resolve to value(s) in [0, 1].", param_name), call. = FALSE)
+    }
+    value
+  }
+
 
   ## Initialise the susceptible population
   susc <- population - initial_immune
@@ -131,10 +143,12 @@ branching_process_main <- function(
   #########################################################################
 
   ## Deciding whether the seeding cases are symptomatic, and if so, when they develop symptoms
+  seeding_cases_time_infection <- seq(from = 0, to = 0.01, length.out = seeding_cases)
   seeding_cases_incubation <- incubation_period(n = seeding_cases)
   seeding_cases_symptomatic <- as.logical(rbinom(n = seeding_cases, size = 1, prob = prob_symptomatic))
   seeding_cases_symptom_onset <- rep(NA_real_, seeding_cases)
   seeding_cases_symptom_onset[seeding_cases_symptomatic] <- seeding_cases_incubation[seeding_cases_symptomatic]
+  seeding_cases_symptom_onset_absolute <- seeding_cases_time_infection + seeding_cases_symptom_onset
 
   ## Deciding on the outcome for the seeding cases, and if so, when that outcome occurs
   seeding_cases_outcome <- rep(FALSE, seeding_cases)
@@ -142,10 +156,21 @@ branching_process_main <- function(
   seeding_cases_outcome_time <- rep(NA_real_, seeding_cases)
   seeding_cases_outcome_time[seeding_cases_outcome] <- seeding_cases_incubation[seeding_cases_outcome] + onset_to_death(n = sum(seeding_cases_outcome))
   seeding_cases_outcome_time[!seeding_cases_outcome] <- seeding_cases_incubation[!seeding_cases_outcome] + onset_to_recovery(n = sum(!seeding_cases_outcome))
+  seeding_cases_outcome_time_absolute <- seeding_cases_time_infection + seeding_cases_outcome_time
 
-  ## Deciding on the times of funerals for dead individuals (all of whom are assumed to have unsafe funerals)
+  ## Deciding funeral safety for seed cases who die. Seed cases are genPop and
+  ## their deaths occur in the community, so use p_unsafe_funeral_comm_genPop at
+  ## each seed case's death time rather than forcing all seed funerals unsafe.
   seeding_cases_funeral_safety <- rep(NA_character_, seeding_cases)
-  seeding_cases_funeral_safety[seeding_cases_outcome] <- "unsafe"
+  if (any(seeding_cases_outcome)) {
+    seeding_cases_p_unsafe_funeral <- resolve_probability(p_unsafe_funeral_comm_genPop,
+                                                          seeding_cases_outcome_time_absolute[seeding_cases_outcome],
+                                                          "p_unsafe_funeral_comm_genPop")
+    seeding_cases_funeral_safety[seeding_cases_outcome] <- ifelse(
+      rbinom(n = sum(seeding_cases_outcome), size = 1, prob = seeding_cases_p_unsafe_funeral) == 1,
+      "unsafe", "safe"
+    )
+  }
 
   ## Initialising the dataframe with the seed cases and their attributes
   tdf[1:seeding_cases, ] <- data.frame(
@@ -154,19 +179,19 @@ branching_process_main <- function(
     infection_location             = rep("community", seeding_cases),
     parent                         = NA_character_,
     generation                     = 1,
-    time_infection_relative        = seq(from = 0, to = 0.01, length.out = seeding_cases),
-    time_infection_absolute        = seq(from = 0, to = 0.01, length.out = seeding_cases),
+    time_infection_relative        = seeding_cases_time_infection,
+    time_infection_absolute        = seeding_cases_time_infection,
     incubation_period              = seeding_cases_incubation,
     symptomatic                    = seeding_cases_symptomatic,
     time_symptom_onset_relative    = seeding_cases_symptom_onset,
-    time_symptom_onset_absolute    = seeding_cases_symptom_onset,
+    time_symptom_onset_absolute    = seeding_cases_symptom_onset_absolute,
     hospitalisation                = rep(FALSE, seeding_cases),
     time_hospitalisation_relative  = NA_real_,
     time_hospitalisation_absolute  = NA_real_,
     outcome                        = seeding_cases_outcome,
     outcome_location               = rep("community", seeding_cases),
     time_outcome_relative          = seeding_cases_outcome_time,
-    time_outcome_absolute          = seeding_cases_outcome_time,
+    time_outcome_absolute          = seeding_cases_outcome_time_absolute,
     funeral_safety                 = seeding_cases_funeral_safety,
     n_offspring                    = NA_integer_,
     offspring_generated            = FALSE,
@@ -193,6 +218,11 @@ branching_process_main <- function(
     ###################################################################################################################
     ### Step 2: Generate offspring associated with community and (if hospitalised) healthcare associated transmission
     ###################################################################################################################
+    ## Pass scalar-or-time-varying response efficacy parameters into the offspring
+    ## functions directly. Those functions know the candidate transmission times,
+    ## so they can resolve PPE/IPC and hospital quarantine/ETU efficacy at the
+    ## actual absolute calendar time of each candidate hospital exposure.
+
     if (parent_info$class == "genPop") {
       offspring_community_healthcare_df <- offspring_function_genPop(parent_info = parent_info,
                                                                      mn_offspring_genPop = mn_offspring_genPop,
@@ -201,9 +231,12 @@ branching_process_main <- function(
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
-                                                                     prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital,
-                                                                     hcw_available = hcw_available)
+                                                                     prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
+      ## PPE/IPC efficacy is passed through unresolved. The HCW offspring
+      ## function resolves it separately for each candidate pre-admission
+      ## hospital transmission event.
+
       offspring_community_healthcare_df <- offspring_function_hcw(parent_info = parent_info,
                                                                   mn_offspring_hcw = mn_offspring_hcw,
                                                                   overdisp_offspring_hcw = overdisp_offspring_hcw,
@@ -213,8 +246,7 @@ branching_process_main <- function(
                                                                   ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                   hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
-                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital,
-                                                                  hcw_available = hcw_available)
+                                                                  prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
     }
 
     ## Count HCWs generated and subtract from available pool
@@ -231,8 +263,7 @@ branching_process_main <- function(
                                                        Tg_rate_funeral = Tg_rate_funeral,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
-                                                       prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop,
-                                                       hcw_available = hcw_available)
+                                                       prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
     ## Update hcw_available after funeral transmission
     n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
     hcw_available <- hcw_available - n_hcw_funeral
@@ -260,8 +291,7 @@ branching_process_main <- function(
                                                        hospitalisation_to_death = hospitalisation_to_death,
                                                        hospitalisation_to_recovery = hospitalisation_to_recovery,
                                                        onset_to_death = onset_to_death,
-                                                       onset_to_recovery = onset_to_recovery,
-                                                       hcw_available = hcw_available)
+                                                       onset_to_recovery = onset_to_recovery)
       tdf$n_offspring[idx] <- nrow(complete_offspring_df)
     } else {
       complete_offspring_df <- tdf[0, , drop = FALSE]
