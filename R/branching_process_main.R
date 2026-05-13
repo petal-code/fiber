@@ -57,7 +57,10 @@ branching_process_main <- function(
   ## Setting model for HCWs
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that an infection generated prior to parent hospitaliation occurs in the hospital (whilst HCW is working)
   ppe_efficacy_hcw = NULL,                  # scalar or function(t): efficacy of PPE/IPC measures at reducing transmission (i.e. pre hospitalisation)
-  hospital_quarantine_efficacy = NULL,      # scalar or function(t): efficacy of quarantine/ETU care at reducing post-hospitalisation transmission
+  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct quarantine/ETU efficacy, retained for backwards compatibility
+  prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care
+  ipc_helper = NULL,                        # scalar/function(t): IPC/response maturity proxy
+  etu_efficacy_baseline = NULL,             # scalar: baseline ETU/ETC efficacy before IPC maturity adjustment
 
   ## Funeral occurrence
   p_unsafe_funeral_comm_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, HCW
@@ -220,8 +223,11 @@ branching_process_main <- function(
     ###################################################################################################################
     ## Pass scalar-or-time-varying response efficacy parameters into the offspring
     ## functions directly. Those functions know the candidate transmission times,
-    ## so they can resolve PPE/IPC and hospital quarantine/ETU efficacy at the
-    ## actual absolute calendar time of each candidate hospital exposure.
+    ## so they can resolve PPE/IPC and post-admission hospital quarantine/ETU
+    ## efficacy at the actual absolute calendar time of each candidate hospital
+    ## exposure. Hospital quarantine efficacy can be supplied directly, or
+    ## calculated inside the offspring functions from prop_etu(t), ipc_helper(t),
+    ## and etu_efficacy_baseline.
 
     if (parent_info$class == "genPop") {
       offspring_community_healthcare_df <- offspring_function_genPop(parent_info = parent_info,
@@ -230,6 +236,9 @@ branching_process_main <- function(
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      hospital_quarantine_efficacy = hospital_quarantine_efficacy,
+                                                                     prop_etu = prop_etu,
+                                                                     ipc_helper = ipc_helper,
+                                                                     etu_efficacy_baseline = etu_efficacy_baseline,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
@@ -245,6 +254,9 @@ branching_process_main <- function(
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
                                                                   ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                   hospital_quarantine_efficacy = hospital_quarantine_efficacy,
+                                                                  prop_etu = prop_etu,
+                                                                  ipc_helper = ipc_helper,
+                                                                  etu_efficacy_baseline = etu_efficacy_baseline,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
                                                                   prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
     }
