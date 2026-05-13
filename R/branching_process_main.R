@@ -103,6 +103,27 @@ branching_process_main <- function(
     value
   }
 
+  ## Hospital quarantine efficacy can either be supplied directly for backwards
+  ## compatibility, or derived inside the offspring functions from ETU coverage,
+  ## IPC maturity, and baseline ETU efficacy. Check this here so missing inputs
+  ## fail early with a clear message rather than failing downstream.
+  has_direct_hospital_efficacy <- !is.null(hospital_quarantine_efficacy)
+
+  has_derived_hospital_efficacy_inputs <-
+    !is.null(prop_etu) &&
+    !is.null(ipc_helper) &&
+    !is.null(etu_efficacy_baseline)
+
+  if (!has_direct_hospital_efficacy && !has_derived_hospital_efficacy_inputs) {
+    stop(
+      paste(
+        "Supply either `hospital_quarantine_efficacy` or all of",
+        "`prop_etu`, `ipc_helper`, and `etu_efficacy_baseline`."
+      ),
+      call. = FALSE
+    )
+  }
+
 
   ## Initialise the susceptible population
   susc <- population - initial_immune
