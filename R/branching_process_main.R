@@ -124,6 +124,19 @@ branching_process_main <- function(
     )
   }
 
+  if (!is.null(etu_efficacy_baseline)) {
+    if (!is.numeric(etu_efficacy_baseline) ||
+        length(etu_efficacy_baseline) != 1L ||
+        is.na(etu_efficacy_baseline) ||
+        etu_efficacy_baseline < 0 ||
+        etu_efficacy_baseline > 1) {
+      stop(
+        "`etu_efficacy_baseline` must be a single numeric value between 0 and 1.",
+        call. = FALSE
+      )
+    }
+  }
+
 
   ## Initialise the susceptible population
   susc <- population - initial_immune

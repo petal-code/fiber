@@ -107,11 +107,26 @@ offspring_function_genPop <- function(
       etu_efficacy_baseline +
       (1 - etu_efficacy_baseline) * ipc_helper_t
 
+    if (any(etu_efficacy_at_t < 0 | etu_efficacy_at_t > 1)) {
+      stop(
+        "`etu_efficacy(t)` must resolve to values between 0 and 1.",
+        call. = FALSE
+      )
+    }
+
     hospital_quarantine_efficacy_t <-
       prop_etu_t * etu_efficacy_at_t +
       (1 - prop_etu_t) * ipc_helper_t
 
-    pmin(pmax(hospital_quarantine_efficacy_t, 0), 1)
+    if (any(hospital_quarantine_efficacy_t < 0 |
+            hospital_quarantine_efficacy_t > 1)) {
+      stop(
+        "`hospital_quarantine_efficacy(t)` must resolve to values between 0 and 1.",
+        call. = FALSE
+      )
+    }
+
+    hospital_quarantine_efficacy_t
   }
 
   # Step 0: Extract relevant parent information from parent_info
