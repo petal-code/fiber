@@ -6,11 +6,15 @@
 #' epidemic duration based on the time between the Nth death (N = 1, 10, 25)
 #' and the final outcome of the last case.
 #'
+#' Counts every infection that was added to `tdf` (every row with a non-NA
+#' `time_infection_absolute`), including leaf cases whose own onward
+#' transmission was not simulated. If any such unprocessed cases are present,
+#' that almost always indicates the simulation cap (`check_final_size`) was
+#' hit before the outbreak completed; a warning is emitted with the count.
+#'
 #' @param tdf Transmission data frame from a model run. Must contain
-#'   `class`, `outcome`, `time_outcome_absolute` and (when
-#'   `subset = "realised_subset"`) `offspring_generated`.
-#' @param subset Either `"realised_subset"` (only cases that generated
-#'   offspring, default) or `"total_tdf"` (all rows).
+#'   `class`, `outcome`, `time_infection_absolute`, `time_outcome_absolute`,
+#'   and `offspring_generated`.
 #'
 #' @return A named list with six elements:
 #'   \itemize{
@@ -25,37 +29,42 @@
 #'   required rank.
 #'
 #' @export
-key_outputs <- function(tdf, subset = "realised_subset") {
+key_outputs <- function(tdf) {
 
-  if (!(subset %in% c("total_tdf", "realised_subset"))) {
-    stop('subset must be either "total_tdf" or "realised_subset"')
+  ## "Real" cases = rows actually populated by the simulation. Preallocated
+  ## but unused rows have time_infection_absolute = NA.
+  is_real <- !is.na(tdf$time_infection_absolute)
+
+  if (!any(is_real)) {
+    stop("No real cases found in tdf; nothing to summarise.", call. = FALSE)
   }
 
-  if (subset == "realised_subset") {
-    if (is.null(tdf$offspring_generated)) {
-      stop('tdf must contain column "offspring_generated" for realised_subset')
-    }
-    subset_vector <- tdf$offspring_generated == TRUE
-  } else {
-    subset_vector <- rep(TRUE, nrow(tdf))
+  ## If any real case did not have its offspring simulated, the cap was
+  ## probably hit before the outbreak finished. Warn with the count.
+  n_real        <- sum(is_real)
+  n_unprocessed <- sum(is_real & !tdf$offspring_generated)
+  if (n_unprocessed > 0L) {
+    warning(sprintf(
+      paste0("Simulation cap likely hit: %d of %d infections did not have ",
+             "their onward transmission simulated (offspring_generated = FALSE). ",
+             "The outbreak may not have run to completion - consider raising ",
+             "`check_final_size`."),
+      n_unprocessed, n_real
+    ), call. = FALSE)
   }
 
-  if (!any(subset_vector)) {
-    stop("No rows selected by subset; nothing to summarise.")
-  }
+  ## Case and death counts (over all real cases, processed or not)
+  n_cases_total  <- n_real
+  n_deaths_total <- sum(is_real & tdf$outcome, na.rm = TRUE)
+  n_deaths_HCW   <- sum(is_real & tdf$outcome & tdf$class == "HCW",
+                        na.rm = TRUE)
 
-  ## Case and death counts
-  n_cases_total  <- sum(subset_vector)
-  n_deaths_total <- sum(tdf$outcome & subset_vector, na.rm = TRUE)
-  n_deaths_HCW   <- sum(tdf$outcome & tdf$class == "HCW" &
-                          subset_vector, na.rm = TRUE)
-
-  ## Times of all deaths in the subset, sorted ascending
-  death_subset <- tdf$outcome & subset_vector & !is.na(tdf$time_outcome_absolute)
+  ## Times of all deaths, sorted ascending
+  death_subset <- is_real & tdf$outcome & !is.na(tdf$time_outcome_absolute)
   death_times  <- sort(tdf$time_outcome_absolute[death_subset])
 
-  ## Final outcome time across all included cases (deaths and recoveries)
-  outcome_times    <- tdf$time_outcome_absolute[subset_vector]
+  ## Final outcome time across all real cases (deaths and recoveries)
+  outcome_times     <- tdf$time_outcome_absolute[is_real]
   last_outcome_time <- suppressWarnings(max(outcome_times, na.rm = TRUE))
   if (!is.finite(last_outcome_time)) last_outcome_time <- NA_real_
 
