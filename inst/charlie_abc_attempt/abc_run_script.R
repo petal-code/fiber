@@ -52,9 +52,11 @@ source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
 
 N_WORKERS <- 10
 cl <- makeCluster(N_WORKERS)
+clusterExport(cl, c("PACKAGE_ROOT", "ABC_DIR"))
 
 # One-time sourcing on each worker.
 clusterEvalQ(cl, {
+  setwd(PACKAGE_ROOT)   # so SCRIPT_DIR in the setup file resolves to <root>/R/
   source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
   source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
 })
@@ -148,31 +150,7 @@ x$mn_offspring_funeral
 
 TAKEOFF_DEATH_THRESHOLD <- 100   # raise/lower to tune what counts as "took off"
 
-abc_summarise <- function(out) {
-  tdf <- out$tdf
-  tdf <- tdf[!is.na(tdf$time_infection_absolute), , drop = FALSE]
-
-  if (nrow(tdf) == 0L) {
-    return(c(n_deaths = 0, n_hcw_deaths = 0, duration = 0))
-  }
-
-  deaths <- !is.na(tdf$outcome) & tdf$outcome
-  hcw    <- !is.na(tdf$class) & tdf$class == "HCW"
-
-  n_cases      <- nrow(tdf)
-  n_deaths     <- sum(deaths)
-  n_hcw_deaths <- sum(deaths & hcw)
-
-  if (n_deaths == 0L) {
-    duration <- 0
-  } else {
-    t_first_death <- min(tdf$time_outcome_absolute[deaths], na.rm = TRUE)
-    t_last_event  <- max(tdf$time_outcome_absolute,         na.rm = TRUE)
-    duration      <- max(t_last_event - t_first_death, 0)
-  }
-
-  c(n_cases = n_cases, n_deaths = n_deaths, n_hcw_deaths = n_hcw_deaths, duration = duration)
-}
+# note abc_summarise moved to 00_common_time_varying... so it can be picked up by parallel abc function
 
 
 # ============================================================================
@@ -292,8 +270,8 @@ prior_predictive_check <- function(n_draws         = 20,
 
 set.seed(1)
 system.time(pp_par <- prior_predictive_check(20, parallel = TRUE, n_replicates = 5))
-set.seed(1)
-system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates = 5))
+# set.seed(1)
+# system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates = 5))
 
 parallel::stopCluster(cl)
 future::plan(sequential)
