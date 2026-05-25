@@ -3,14 +3,17 @@
 #' Aggregates events from a transmission data frame into daily or weekly
 #' incidence counts for one of four metrics.
 #'
+#' Counts every infection that was added to `tdf` (every row with a non-NA
+#' `time_infection_absolute`), including leaf cases whose own onward
+#' transmission was not simulated. This matches the convention used by
+#' `key_outputs()`. To check whether the simulation finished, inspect
+#' `all(tdf$offspring_generated)` separately.
+#'
 #' @param tdf     Transmission data frame from `branching_process_main()`.
 #' @param metric  One of `"cases"`, `"deaths"`, `"cases_HCW"`, `"deaths_HCW"`.
 #'                Cases are anchored at `time_infection_absolute`; deaths at
 #'                `time_outcome_absolute` (filtered by `outcome == TRUE`).
 #' @param period  `"daily"` (1-day bins) or `"weekly"` (7-day bins).
-#' @param subset  Either `"realised_subset"` (default, `offspring_generated == TRUE`)
-#'                or `"total_tdf"`. Matches `key_outputs()` /
-#'                `summarise_output()`.
 #' @param dense   If TRUE (default), the output spans every bin from day 0 to
 #'                the last event, with zero counts for empty bins (useful for
 #'                plotting). If FALSE, only bins with at least one event are
@@ -36,28 +39,15 @@ generate_incidence <- function(
     tdf,
     metric = c("cases", "deaths", "cases_HCW", "deaths_HCW"),
     period = c("daily", "weekly"),
-    subset = "realised_subset",
     dense  = TRUE
 ) {
 
   metric <- match.arg(metric)
   period <- match.arg(period)
 
-  if (!(subset %in% c("total_tdf", "realised_subset"))) {
-    stop('subset must be either "total_tdf" or "realised_subset"',
-         call. = FALSE)
-  }
-
-  ## ---- Subset selection (same convention as key_outputs) ----------------
-  if (subset == "realised_subset") {
-    if (is.null(tdf$offspring_generated)) {
-      stop('tdf must contain column "offspring_generated" for realised_subset',
-           call. = FALSE)
-    }
-    subset_vector <- tdf$offspring_generated == TRUE
-  } else {
-    subset_vector <- rep(TRUE, nrow(tdf))
-  }
+  ## "Real" cases = rows actually populated by the simulation. Preallocated
+  ## but unused rows have time_infection_absolute = NA.
+  is_real <- !is.na(tdf$time_infection_absolute)
 
   ## ---- Pick time anchor and event filter per metric ---------------------
   is_case <- metric %in% c("cases", "cases_HCW")
@@ -75,7 +65,7 @@ generate_incidence <- function(
     event_flag <- event_flag & (tdf$class == "HCW")
   }
 
-  event_subset <- subset_vector & event_flag & !is.na(event_time)
+  event_subset <- is_real & event_flag & !is.na(event_time)
   event_times  <- event_time[event_subset]
 
   empty_out <- data.frame(time = integer(0), incidence = integer(0))
