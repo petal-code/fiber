@@ -213,7 +213,7 @@ observed_summaries <- c(
 # ============================================================================
 
 priors <- list(
-  c("unif", 1.35,  1.55),    # R0
+  c("unif", 1.35,  1.55),  # R0
   c("unif", 0.1,  0.4),    # prop_funeral
   c("unif", 0.20, 0.80)    # prob_hcw_cond_genPop_hospital
 )
@@ -412,7 +412,7 @@ print(apply(posterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
 
 par(mfrow = c(1, 3))
 for (j in seq_len(ncol(posterior))) {
-  hist(posterior[, j], breaks = 30, main = colnames(posterior)[j],
+  hist(posterior[, j], breaks = 15, main = colnames(posterior)[j],
        xlab = colnames(posterior)[j])
   abline(v = quantile(posterior[, j], c(0.025, 0.5, 0.975)),
          lty = c(2, 1, 2), col = "red")

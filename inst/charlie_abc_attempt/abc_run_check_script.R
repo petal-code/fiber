@@ -147,7 +147,7 @@ abc_compare_steps <- function(dir = getwd()) {
   do.call(rbind, rows)
 }
 
-abc_progress(PACKAGE_ROOT, tolerance_target = 1.0)
+abc_progress(PACKAGE_ROOT, tolerance_target = 0.5)
 abc_compare_steps(PACKAGE_ROOT)
 
 step3 <- read.table(file.path(PACKAGE_ROOT, "output_step3"), header = FALSE)
@@ -220,7 +220,7 @@ reconstruct_abc_result <- function(dir = getwd(), step = NULL) {
 result <- reconstruct_abc_result(PACKAGE_ROOT)
 
 # Or specify a particular step
-result <- reconstruct_abc_result(PACKAGE_ROOT, step = 5)
+result <- reconstruct_abc_result(PACKAGE_ROOT, step = 4)
 
 # Now use it the same way as a real ABC_sequential result
 posterior <- as.data.frame(result$param)
