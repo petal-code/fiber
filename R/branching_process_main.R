@@ -273,6 +273,7 @@ branching_process_main <- function(
                                                                      prop_etu = prop_etu,
                                                                      ipc_helper = ipc_helper,
                                                                      etu_efficacy_baseline = etu_efficacy_baseline,
+                                                                     ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
