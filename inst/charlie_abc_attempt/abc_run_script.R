@@ -48,23 +48,6 @@ setwd(PACKAGE_ROOT)
 source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
 source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
 
-# ---- Cluster setup (run ONCE; reuse for all parallel work) ------------------
-
-# N_WORKERS <- 10
-# cl <- makeCluster(N_WORKERS)
-# clusterExport(cl, c("PACKAGE_ROOT", "ABC_DIR"))
-#
-# # One-time sourcing on each worker.
-# clusterEvalQ(cl, {
-#   setwd(PACKAGE_ROOT)   # so SCRIPT_DIR in the setup file resolves to <root>/R/
-#   source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
-#   source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
-# })
-#
-#
-# # Tell future to dispatch to this cluster.
-# plan(cluster, workers = cl)
-
 # ============================================================================
 # 1. SOURCE THE COMMON SETUP
 #    Brings in DEFAULT_SCALAR_INPUTS, make_base_args(),
@@ -224,7 +207,7 @@ observed_summaries <- c(
 priors <- list(
   c("unif", 1.35,  1.55),  # R0
   c("unif", 0.1,  0.4),    # prop_funeral
-  c("unif", 1, 2.5)    # prob_hcw_cond_genPop_hospital
+  c("unif", 2, 5)    # prob_hcw_cond_genPop_hospital
 )
 
 # ============================================================================
@@ -277,11 +260,26 @@ prior_predictive_check <- function(n_draws         = 20,
   cbind(draws, as.data.frame(sims))
 }
 
-# set.seed(1)
-# system.time(pp_par <- prior_predictive_check(20, parallel = TRUE, n_replicates = 5))
-# set.seed(1)
-# system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates = 5))
+# ---- Cluster setup (run ONCE; reuse for all parallel work) ------------------
 
+# N_WORKERS <- 100
+# cl <- makeCluster(N_WORKERS)
+# clusterExport(cl, c("PACKAGE_ROOT", "ABC_DIR"))
+#
+# # One-time sourcing on each worker.
+# clusterEvalQ(cl, {
+#   setwd(PACKAGE_ROOT)   # so SCRIPT_DIR in the setup file resolves to <root>/R/
+#   source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
+#   source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
+# })
+#
+#
+# # Tell future to dispatch to this cluster.
+# plan(cluster, workers = cl)
+#
+# set.seed(1)
+# system.time(pp_par <- prior_predictive_check(100, parallel = TRUE, n_replicates = 5))
+#
 # parallel::stopCluster(cl)
 # future::plan(sequential)
 # rm(cl)
@@ -370,7 +368,7 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
   args$seed                          <- NULL
   args$seeding_cases                 <- 25
 
-  N_REPS <- 20 ## NEED TO CHANGE THIS SO IT'S NOT HARD CODED
+  N_REPS <- 30 ## NEED TO CHANGE THIS SO IT'S NOT HARD CODED
   reps <- vapply(seq_len(N_REPS), function(i) {
     out <- do.call(branching_process_main, args)
     abc_summarise(out)
@@ -389,7 +387,7 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
 
 # N_REPLICATES <- 5   ## NEED TO CHANGE CURRENTLY AS THIS IS DOING NOTHING AND IT'S HARD CODED ABOVE
 if (grepl("PETAL", Sys.info()[["user"]], ignore.case = TRUE)) {
-  n_cluster <- min(110, parallel::detectCores() - 10)
+  n_cluster <- min(120, parallel::detectCores() - 10)
 } else {
   n_cluster <- min(10,  parallel::detectCores() - 4)
 }
@@ -399,7 +397,7 @@ result <- ABC_sequential(
   method              = "Delmoral",
   model               = fiber_abc_model_parallel,
   prior               = priors,
-  nb_simul            = 200,
+  nb_simul            = 240,
   summary_stat_target = observed_summaries,
   alpha               = 0.5,
   tolerance_target    = 0.5,
@@ -427,10 +425,10 @@ for (j in seq_len(ncol(posterior))) {
   abline(v = quantile(posterior[, j], c(0.025, 0.5, 0.975)),
          lty = c(2, 1, 2), col = "red")
 }
-par(mfrow = c(1, 1))
-
-pairs(posterior, pch = 16, cex = 0.5,
-      col = adjustcolor("steelblue", alpha = 0.4))
+# par(mfrow = c(1, 1))
+#
+# pairs(posterior, pch = 16, cex = 0.5,
+#       col = adjustcolor("steelblue", alpha = 0.4))
 
 saveRDS(result,
         file = paste0("fiber_abc_smc_result_", SCENARIO_ID, "_phase2.rds"))
