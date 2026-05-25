@@ -125,7 +125,35 @@ summarise_output <- function(
   }
 
   ##--------------------------------------------------------------
-  ## 5. Return a named list
+  ## 5. OBV PEP summary
+  ##--------------------------------------------------------------
+  obv_counts <- attr(tdf, "obv_pep_counts", exact = TRUE)
+  if (is.null(obv_counts) && !is.null(sim_info$obv_pep_counts)) {
+    obv_counts <- sim_info$obv_pep_counts
+  }
+
+  n_obv_pep_eligible_exposures <- if (!is.null(obv_counts)) obv_counts$eligible else NA_real_
+  n_obv_pep_received_courses <- if (!is.null(obv_counts)) obv_counts$received else NA_real_
+  n_obv_pep_adherent_courses <- if (!is.null(obv_counts)) obv_counts$adherent else NA_real_
+  n_obv_pep_prevented_infections <- if (!is.null(obv_counts)) obv_counts$prevented else NA_real_
+
+  if (!is.null(tdf$obv_pep_eligible)) {
+    n_obv_pep_eligible_breakthroughs <- sum(tdf$obv_pep_eligible & subset_vector, na.rm = TRUE)
+    n_obv_pep_received_breakthroughs <- sum(tdf$obv_pep_received & subset_vector, na.rm = TRUE)
+    n_obv_pep_adherent_breakthroughs <- sum(tdf$obv_pep_adherent & subset_vector, na.rm = TRUE)
+  } else {
+    n_obv_pep_eligible_breakthroughs <- NA_real_
+    n_obv_pep_received_breakthroughs <- NA_real_
+    n_obv_pep_adherent_breakthroughs <- NA_real_
+  }
+
+  prop_obv_pep_prevented_among_adherent <- if (is.finite(n_obv_pep_adherent_courses) &&
+                                               n_obv_pep_adherent_courses > 0) {
+    n_obv_pep_prevented_infections / n_obv_pep_adherent_courses
+  } else NA_real_
+
+  ##--------------------------------------------------------------
+  ## 6. Return a named list
   ##--------------------------------------------------------------
   out <- list(
     ## Outbreak timing
@@ -161,7 +189,17 @@ summarise_output <- function(
     attack_rate_overall      = attack_rate_overall,
     attack_rate_genPop       = attack_rate_genPop,
     hcw_attack_rate          = hcw_attack_rate,
-    deaths_per_1000_pop      = deaths_per_1000_pop
+    deaths_per_1000_pop      = deaths_per_1000_pop,
+
+    ## OBV PEP exposure/course counters
+    n_obv_pep_eligible_exposures      = n_obv_pep_eligible_exposures,
+    n_obv_pep_received_courses        = n_obv_pep_received_courses,
+    n_obv_pep_adherent_courses        = n_obv_pep_adherent_courses,
+    n_obv_pep_prevented_infections    = n_obv_pep_prevented_infections,
+    n_obv_pep_eligible_breakthroughs  = n_obv_pep_eligible_breakthroughs,
+    n_obv_pep_received_breakthroughs  = n_obv_pep_received_breakthroughs,
+    n_obv_pep_adherent_breakthroughs  = n_obv_pep_adherent_breakthroughs,
+    prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent
   )
 
   return(out)

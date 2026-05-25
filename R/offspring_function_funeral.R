@@ -40,6 +40,18 @@
 #' @param Tg_rate_funeral Positive numeric. Rate of Gamma delay distribution. ## mean GT = shape/rate
 #' @param safe_funeral_efficacy numeric between 0 and 1. Efficacy in preventing transmission at a safe funeral where 1 = perfect efficacy/no onward transmission; 0 = no efficacy (equivalent to an unsafe funeral). This remains scalar; the time-varying probability that a funeral is safe or unsafe is resolved upstream.
 #'
+#' @param obv_pep_enabled Logical scalar. If TRUE, applies an OBV PEP infection-prevention
+#'   gate to eligible candidate HCW exposures after existing IPC/PPE and ETU/quarantine thinning.
+#' @param obv_pep_coverage_hcw Numeric in \code{[0,1]} or function(t). Probability an eligible
+#'   HCW exposure receives OBV PEP at calendar time \code{t}.
+#' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability an OBV recipient
+#'   adheres sufficiently for efficacy to apply.
+#' @param obv_pep_dpc Non-negative numeric or function(t). Days post challenge/exposure to first
+#'   dose. The simplest working assumption is \code{obv_pep_dpc = 1}.
+#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
+#'   \code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.
+#' @param obv_pep_target_locations Character vector of exposure settings eligible for OBV PEP.
+#'   Defaults to \code{"hospital"} for HCW PEP.
 #' @param prob_hcw_cond_funeral_hcw Numeric between 0 and 1. Probability a funeral infection is an HCW.
 #' @param prob_hcw_cond_funeral_genPop Numeric between 0 and 1. Probability a funeral infection is a GenPop
 #'
@@ -62,6 +74,14 @@ offspring_function_funeral <- function(
 
   ### efficacy of a safe funeral (thinning funeral offspring)
   safe_funeral_efficacy = NULL, ## efficacy of a safe burial in reducing transmission in a funeral setting
+
+  ## Obeldesivir PEP for exposed HCWs
+  obv_pep_enabled = FALSE,
+  obv_pep_coverage_hcw = 0,
+  obv_pep_adherence = 1,
+  obv_pep_dpc = 1,
+  obv_pep_efficacy = NULL,
+  obv_pep_target_locations = "hospital",
 
   ## HCW vs genPop at funeral
   prob_hcw_cond_funeral_hcw = NULL, ### probability that the unsafe funeral infector infects a HCW
@@ -144,7 +164,7 @@ offspring_function_funeral <- function(
 
   # Step 1: Ensure parent is dead. If parent survived, no funeral transmission
   if (!isTRUE(parent_died)) {
-    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
+    return(empty_offspring_dataframe())
   }
 
   # Step 2: Information on whether the parent had an unsafe or safe funeral
@@ -171,7 +191,7 @@ offspring_function_funeral <- function(
   }
 
   if (num_offspring == 0L) {
-    return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
+    return(empty_offspring_dataframe())
   }
 
   # Step 5: Generate infection times = outcome time + Gamma distributed 'delay', typically with
@@ -193,9 +213,31 @@ offspring_function_funeral <- function(
     stop("Step 6 of funeral offspring function is broken")
   }
 
+  # Step 7: Apply the same OBV PEP gate. By default this does nothing for
+  #         funeral exposures because obv_pep_target_locations = "hospital", but
+  #         it allows explicit funeral-PEP scenarios if wanted later.
+  obv_gate <- apply_obv_pep_gate(
+    infection_location = infection_settings,
+    offspring_class = offspring_class,
+    infection_time_absolute = parent_info$time_infection_absolute + infection_times,
+    obv_pep_enabled = obv_pep_enabled,
+    obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+    obv_pep_adherence = obv_pep_adherence,
+    obv_pep_dpc = obv_pep_dpc,
+    obv_pep_efficacy = obv_pep_efficacy,
+    obv_pep_target_locations = obv_pep_target_locations
+  )
+
+  infection_times <- infection_times[obv_gate$keep]
+  infection_settings <- infection_settings[obv_gate$keep]
+  offspring_class <- offspring_class[obv_gate$keep]
+  obv_metadata <- obv_gate$metadata[obv_gate$keep, , drop = FALSE]
+
   offspring_df <- data.frame(infection_location = infection_settings,
                              time_infection_relative = infection_times,
                              class = offspring_class,
+                             obv_metadata,
                              stringsAsFactors = FALSE)
+  attr(offspring_df, "obv_pep_counts") <- obv_gate$counts
   return(offspring_df)
 }

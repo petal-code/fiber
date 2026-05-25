@@ -62,6 +62,14 @@ branching_process_main <- function(
   ipc_helper = NULL,                        # scalar/function(t): IPC/response maturity proxy
   etu_efficacy_baseline = NULL,             # scalar: baseline ETU/ETC efficacy before IPC maturity adjustment
 
+  ## Obeldesivir PEP for exposed HCWs
+  obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate to eligible HCW exposures
+  obv_pep_coverage_hcw = 0,                  # scalar/function(t): probability eligible HCW exposure receives OBV
+  obv_pep_adherence = 1,                     # scalar/function(t): probability received course is effectively adhered to
+  obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose
+  obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
+  obv_pep_target_locations = "hospital",     # exposure settings eligible for OBV PEP
+
   ## Funeral occurrence
   p_unsafe_funeral_comm_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, HCW
   p_unsafe_funeral_hosp_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a hospital death, HCW
@@ -137,6 +145,24 @@ branching_process_main <- function(
     }
   }
 
+  if (!is.logical(obv_pep_enabled) || length(obv_pep_enabled) != 1L || is.na(obv_pep_enabled)) {
+    stop("`obv_pep_enabled` must be a single logical value.", call. = FALSE)
+  }
+  if (!is.character(obv_pep_target_locations) || length(obv_pep_target_locations) < 1L) {
+    stop("`obv_pep_target_locations` must be a non-empty character vector.", call. = FALSE)
+  }
+
+  obv_pep_counts <- empty_obv_pep_counts()
+  update_obv_pep_counts <- function(offspring_df) {
+    counts <- attr(offspring_df, "obv_pep_counts", exact = TRUE)
+    if (is.null(counts)) {
+      return(invisible(NULL))
+    }
+    for (nm in names(obv_pep_counts)) {
+      obv_pep_counts[[nm]] <<- obv_pep_counts[[nm]] + counts[[nm]]
+    }
+    invisible(NULL)
+  }
 
   ## Initialise the susceptible population
   susc <- population - initial_immune
@@ -170,6 +196,11 @@ branching_process_main <- function(
     time_outcome_relative          = NA_real_,
     time_outcome_absolute          = NA_real_,
     funeral_safety                 = NA_character_,
+    obv_pep_eligible               = rep(FALSE, max_cases),
+    obv_pep_received               = rep(FALSE, max_cases),
+    obv_pep_adherent               = rep(FALSE, max_cases),
+    obv_pep_dpc                    = rep(NA_real_, max_cases),
+    obv_pep_efficacy               = rep(NA_real_, max_cases),
     n_offspring                    = integer(max_cases),
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -230,6 +261,11 @@ branching_process_main <- function(
     time_outcome_relative          = seeding_cases_outcome_time,
     time_outcome_absolute          = seeding_cases_outcome_time_absolute,
     funeral_safety                 = seeding_cases_funeral_safety,
+    obv_pep_eligible               = rep(FALSE, seeding_cases),
+    obv_pep_received               = rep(FALSE, seeding_cases),
+    obv_pep_adherent               = rep(FALSE, seeding_cases),
+    obv_pep_dpc                    = rep(NA_real_, seeding_cases),
+    obv_pep_efficacy               = rep(NA_real_, seeding_cases),
     n_offspring                    = NA_integer_,
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -273,6 +309,12 @@ branching_process_main <- function(
                                                                      prop_etu = prop_etu,
                                                                      ipc_helper = ipc_helper,
                                                                      etu_efficacy_baseline = etu_efficacy_baseline,
+                                                                     obv_pep_enabled = obv_pep_enabled,
+                                                                     obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                                     obv_pep_adherence = obv_pep_adherence,
+                                                                     obv_pep_dpc = obv_pep_dpc,
+                                                                     obv_pep_efficacy = obv_pep_efficacy,
+                                                                     obv_pep_target_locations = obv_pep_target_locations,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
@@ -291,9 +333,17 @@ branching_process_main <- function(
                                                                   prop_etu = prop_etu,
                                                                   ipc_helper = ipc_helper,
                                                                   etu_efficacy_baseline = etu_efficacy_baseline,
+                                                                  obv_pep_enabled = obv_pep_enabled,
+                                                                  obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                                  obv_pep_adherence = obv_pep_adherence,
+                                                                  obv_pep_dpc = obv_pep_dpc,
+                                                                  obv_pep_efficacy = obv_pep_efficacy,
+                                                                  obv_pep_target_locations = obv_pep_target_locations,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
                                                                   prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
     }
+
+    update_obv_pep_counts(offspring_community_healthcare_df)
 
     ## Count HCWs generated and subtract from available pool
     n_hcw_community_healthcare <- sum(offspring_community_healthcare_df$class == "HCW")
@@ -308,8 +358,16 @@ branching_process_main <- function(
                                                        Tg_shape_funeral = Tg_shape_funeral,
                                                        Tg_rate_funeral = Tg_rate_funeral,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
+                                                       obv_pep_enabled = obv_pep_enabled,
+                                                       obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                       obv_pep_adherence = obv_pep_adherence,
+                                                       obv_pep_dpc = obv_pep_dpc,
+                                                       obv_pep_efficacy = obv_pep_efficacy,
+                                                       obv_pep_target_locations = obv_pep_target_locations,
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
                                                        prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
+    update_obv_pep_counts(offspring_funeral_df)
+
     ## Update hcw_available after funeral transmission
     n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
     hcw_available <- hcw_available - n_hcw_funeral
@@ -368,6 +426,7 @@ branching_process_main <- function(
   attr(tdf, "hcw_total") <- hcw_total
   attr(tdf, "hcw_infected") <- hcw_total - hcw_available
   attr(tdf, "hcw_remaining") <- hcw_available
+  attr(tdf, "obv_pep_counts") <- obv_pep_counts
 
   out <- list(
     tdf = tdf,
@@ -375,7 +434,9 @@ branching_process_main <- function(
       population     = population,
       hcw_per_capita = hcw_per_capita,
       hcw_total      = hcw_total,
-      seed           = seed
+      seed           = seed,
+      obv_pep_enabled = obv_pep_enabled,
+      obv_pep_counts = obv_pep_counts
     )
   )
 
