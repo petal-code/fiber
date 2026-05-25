@@ -213,9 +213,9 @@ observed_summaries <- c(
 # ============================================================================
 
 priors <- list(
-  c("unif", 1.3,  1.6),    # R0
+  c("unif", 1.35,  1.55),    # R0
   c("unif", 0.1,  0.3),    # prop_funeral
-  c("unif", 0.20, 0.60)    # prob_hcw_cond_genPop_hospital
+  c("unif", 0.20, 0.80)    # prob_hcw_cond_genPop_hospital
 )
 
 # ============================================================================
@@ -268,15 +268,15 @@ prior_predictive_check <- function(n_draws         = 20,
   cbind(draws, as.data.frame(sims))
 }
 
-set.seed(1)
-system.time(pp_par <- prior_predictive_check(20, parallel = TRUE, n_replicates = 5))
+# set.seed(1)
+# system.time(pp_par <- prior_predictive_check(20, parallel = TRUE, n_replicates = 5))
 # set.seed(1)
 # system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates = 5))
 
-parallel::stopCluster(cl)
-future::plan(sequential)
-rm(cl)
-gc()
+# parallel::stopCluster(cl)
+# future::plan(sequential)
+# rm(cl)
+# gc()
 
 # prior_predictive_check(n_draws = 1000, prior_list = priors)
 # set.seed(1)
@@ -360,7 +360,7 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
   args$seed                          <- NULL
   args$seeding_cases                 <- 25
 
-  N_REPS <- 10
+  N_REPS <- 20 ## NEED TO CHANGE THIS SO IT'S NOT HARD CODED
   reps <- vapply(seq_len(N_REPS), function(i) {
     out <- do.call(branching_process_main, args)
     abc_summarise(out)
@@ -377,29 +377,29 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
     duration     = mean(reps["duration",     took_off]))
 }
 
-N_REPLICATES <- 5   # smoke-test level; bump for Stages 2 and 3
-DESKTOP <- TRUE
-if (DESKTOP) {
-  n_cluster <- 100
+# N_REPLICATES <- 5   ## NEED TO CHANGE CURRENTLY AS THIS IS DOING NOTHING AND IT'S HARD CODED ABOVE
+if (grepl("PETAL", Sys.info()[["user"]], ignore.case = TRUE)) {
+  n_cluster <- min(110, parallel::detectCores() - 10)
 } else {
-  n_cluster <- 10
+  n_cluster <- min(10,  parallel::detectCores() - 4)
 }
 
+start_time <- Sys.time()
 result <- ABC_sequential(
   method              = "Delmoral",
   model               = fiber_abc_model_parallel,
   prior               = priors,
-  nb_simul            = 100,             # smoke test: small particle population
+  nb_simul            = 200,
   summary_stat_target = observed_summaries,
   alpha               = 0.5,
-  tolerance_target    = 1.0,            # loose: just want it to complete
+  tolerance_target    = 0.5,
   M                   = 1,
-  # p_acc_min           = 0.1,            # high: allow early stopping
   use_seed            = TRUE,
   verbose             = TRUE,
-  n_cluster           = 100                # EasyABC serial; future does the work
+  n_cluster           = n_cluster
 )
-
+end_time <- Sys.time()
+print(end_time - start_time)
 
 # ============================================================================
 # 10. POSTERIOR INSPECTION
@@ -424,3 +424,15 @@ pairs(posterior, pch = 16, cex = 0.5,
 
 saveRDS(result,
         file = paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
+
+
+posterior_median <- c(R0 = 1.45, prop_funeral = 0.21, p_hcw_hosp = 0.43)
+reps_test <- replicate(50, {
+  set.seed(NULL)
+  fiber_abc_model_parallel(c(round(runif(1) * 1e9),
+                             posterior_median[1],
+                             posterior_median[2],
+                             posterior_median[3]))
+})
+# Coefficient of variation per summary statistic:
+apply(reps_test, 1, function(x) sd(x) / mean(x))
