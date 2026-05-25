@@ -22,13 +22,13 @@
 #'
 #' @param parent_class Character scalar, either "genPop" or "HCW". Class of the parent.
 #'
-#' @param p_unsafe_funeral_comm_hcw Numeric in [0,1]. Probability that a **community** death of a HCW leads
+#' @param p_unsafe_funeral_comm_hcw Numeric between 0 and 1. Probability that a **community** death of a HCW leads
 #'   to an unsafe funeral.
-#' @param p_unsafe_funeral_hosp_hcw Numeric in [0,1]. Probability that a **hospital** death of a HCW  leads
+#' @param p_unsafe_funeral_hosp_hcw Numeric between 0 and 1. Probability that a **hospital** death of a HCW  leads
 #'   to an unsafe funeral (may be small but non-zero for completeness).
-#' @param p_unsafe_funeral_comm_genPop Numeric in [0,1]. Probability that a **community** death of a genPop leads
+#' @param p_unsafe_funeral_comm_genPop Numeric between 0 and 1. Probability that a **community** death of a genPop leads
 #'   to an unsafe funeral.
-#' @param p_unsafe_funeral_hosp_genPop Numeric in [0,1]. Probability that a **hospital** death of a genPop leads
+#' @param p_unsafe_funeral_hosp_genPop Numeric between 0 and 1. Probability that a **hospital** death of a genPop leads
 #'   to an unsafe funeral (may be small but non-zero for completeness).
 #'
 #' @param mn_offspring_funeral Positive numeric. Mean of NB distribution for number
@@ -38,12 +38,10 @@
 #' @param Tg_shape_funeral Positive numeric. Shape of Gamma delay distribution
 #'   for time from outcome to funeral infections.
 #' @param Tg_rate_funeral Positive numeric. Rate of Gamma delay distribution. ## mean GT = shape/rate
-#' @param safe_funeral_efficacy numeric in [0,1]. Efficacy in preventing transmission at a safe funeral where 1 = perfect efficacy/
-#' no onward transmission; 0 = no efficacy (equivalent to an unsafe funeral). Acts as a thinning parameter,
-#' reducing number of offspring generated.
+#' @param safe_funeral_efficacy numeric between 0 and 1. Efficacy in preventing transmission at a safe funeral where 1 = perfect efficacy/no onward transmission; 0 = no efficacy (equivalent to an unsafe funeral). This remains scalar; the time-varying probability that a funeral is safe or unsafe is resolved upstream.
 #'
-#' @param prob_hcw_cond_funeral_hcw Numeric in [0,1]. Probability a funeral infection is an HCW.
-#' @param prob_hcw_cond_funeral_genPop Numeric in [0,1]. Probability a funeral infection is a GenPop
+#' @param prob_hcw_cond_funeral_hcw Numeric between 0 and 1. Probability a funeral infection is an HCW.
+#' @param prob_hcw_cond_funeral_genPop Numeric between 0 and 1. Probability a funeral infection is a GenPop
 #'
 #' @return A data.frame with one row per realised funeral offspring and columns:
 #'   \code{id}, \code{parent_class}, \code{setting}, \code{time_infection}, \code{class}.
@@ -119,6 +117,16 @@ offspring_function_funeral <- function(
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
   }
 
+  ## Keep safe funeral efficacy as a scalar here. The probability that a funeral
+  ## is safe/unsafe is already resolved upstream in complete_offspring_info();
+  ## this parameter only controls residual transmission if a funeral is labelled
+  ## safe. Set safe_funeral_efficacy = 1 for fully transmission-blocking safe funerals.
+  if (is.null(safe_funeral_efficacy) || !is.numeric(safe_funeral_efficacy) ||
+      length(safe_funeral_efficacy) != 1L || is.na(safe_funeral_efficacy) ||
+      safe_funeral_efficacy < 0 || safe_funeral_efficacy > 1) {
+    stop("`safe_funeral_efficacy` must be a single numeric value in [0, 1].", call. = FALSE)
+  }
+
   if (is.null(prob_hcw_cond_funeral_hcw) || !is.numeric(prob_hcw_cond_funeral_hcw) ||
       length(prob_hcw_cond_funeral_hcw) != 1L || is.na(prob_hcw_cond_funeral_hcw) ||
       prob_hcw_cond_funeral_hcw < 0 || prob_hcw_cond_funeral_hcw > 1)
@@ -154,35 +162,37 @@ offspring_function_funeral <- function(
     size = overdisp_offspring_funeral
   )
 
-  # Step 4: Thin the number of infections if the funeral is a safe one
-  if (!has_unsafe_funeral) {
-    keep_infection <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = 1 - safe_funeral_efficacy))
-    num_offspring <- sum(keep_infection)
-  } else {
-    num_offspring <- num_offspring_raw
-  }
-
-  if (num_offspring == 0L) {
+  if (num_offspring_raw == 0L) {
     return(data.frame(infection_location = character(0), time_infection_relative = numeric(0), class = character(0), stringsAsFactors=FALSE))
   }
 
-  # Step 5: Generate infection times = outcome time + Gamma distributed 'delay', typically with
+  # Step 4: Generate infection times = outcome time + Gamma distributed 'delay', typically with
   #         little variance to represent a singular point from which infections arose
-  delay_funeral <- rgamma(n = num_offspring, shape = Tg_shape_funeral, rate  = Tg_rate_funeral)
+  delay_funeral <- rgamma(n = num_offspring_raw, shape = Tg_shape_funeral, rate = Tg_rate_funeral)
   infection_times <- parent_time_to_outcome + delay_funeral
 
-  # Step 6: Assign setting ("funeral") and class (HCW or genPop) - currently, we have separate probabilities
-  #         where prob_hcw_cond_funeral depends on class of the parent
-  infection_settings <- rep("funeral", num_offspring)
-  offspring_class <- rep("genPop", num_offspring)
+  # Step 5: Assign setting ("funeral") for all candidate offspring
+  infection_settings <- rep("funeral", num_offspring_raw)
+
+  # Step 6: Assign class (HCW or genPop) to each candidate offspring. Class is assigned BEFORE
+  #         thinning to match the structure of offspring_function_genPop and offspring_function_hcw,
+  #         even though funeral thinning is class-independent.
+  offspring_class <- rep("genPop", num_offspring_raw)
   if (parent_class == "genPop") {
-    flip_hcw <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hcw_cond_funeral_genPop))
-    offspring_class[flip_hcw] <- "HCW"
+    flip_hcw <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = prob_hcw_cond_funeral_genPop))
   } else if (parent_class == "HCW") {
-    flip_hcw <- as.logical(rbinom(n = num_offspring, size = 1, prob = prob_hcw_cond_funeral_hcw))
-    offspring_class[flip_hcw] <- "HCW"
+    flip_hcw <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = prob_hcw_cond_funeral_hcw))
   } else {
     stop("Step 6 of funeral offspring function is broken")
+  }
+  offspring_class[flip_hcw] <- "HCW"
+
+  # Step 7: Thin if the funeral is a safe one (class-independent thinning by safe_funeral_efficacy)
+  if (!has_unsafe_funeral) {
+    keep_infection <- as.logical(rbinom(n = num_offspring_raw, size = 1, prob = 1 - safe_funeral_efficacy))
+    infection_times <- infection_times[keep_infection]
+    infection_settings <- infection_settings[keep_infection]
+    offspring_class <- offspring_class[keep_infection]
   }
 
   offspring_df <- data.frame(infection_location = infection_settings,

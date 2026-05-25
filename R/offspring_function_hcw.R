@@ -6,43 +6,58 @@
 #' on \eqn{[0, t_\mathrm{outcome}]}. For HCW parents, **pre-admission** candidate infections
 #' may occur in the **hospital** (while working) or in the **community**: each pre-admission
 #' event is assigned to the hospital with probability \code{prob_hospital_cond_hcw_preAdm}
-#' and to the community otherwise. Candidate events occurring at or after the parent’s
-#' hospitalisation time are always labelled \code{"hospital"}. Hospital-setting events are then
-#' thinned to reflect protection before admission (PPE/IPC) and quarantine after admission:
-#' pre-admission hospital keeps with probability \eqn{1 - \mathrm{ppe\_efficacy\_hcw}}; post-admission
-#' hospital keeps with probability \eqn{1 - \mathrm{hospital\_quarantine\_efficacy}}. Finally, each
-#' offspring is assigned a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities.
+#' and to the community otherwise. Candidate events occurring at or after the parent's
+#' hospitalisation time are always labelled \code{"hospital"}. Each offspring is then assigned
+#' a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities, and hospital
+#' events are thinned by three multiplicatively-combined protective layers, each applied only
+#' where it is relevant:
+#' \itemize{
+#'   \item Source PPE worn by the still-working HCW parent applies to all pre-admission
+#'         hospital events (any recipient class).
+#'   \item Receiver PPE worn by HCW recipients while treating the source applies to all
+#'         hospital events with an HCW recipient (pre- or post-admission).
+#'   \item Hospital quarantine applies to all post-admission hospital events (source is now
+#'         a hospitalised, isolated HCW patient).
+#' }
+#' Hospital keep-probability is therefore
+#' \eqn{(1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])}.
+#' All time-varying efficacies are resolved at the absolute calendar time of each candidate
+#' hospital transmission event. Post-admission hospital quarantine efficacy can either be
+#' supplied directly or calculated internally from ETU/ETC coverage, IPC maturity, and baseline
+#' ETU efficacy.
 #'
-#' @param parent_hospitalised Logical scalar. Whether the parent (HCW infector) is hospitalised.
-#' @param parent_time_to_hospitalisation Numeric scalar \eqn{\ge 0} or \code{NA}. If hospitalised,
-#'   the time from infection to hospital admission; must be non-negative. If not hospitalised,
-#'   must be \code{NA}.
-#' @param parent_time_to_outcome Numeric scalar \eqn{\ge 0}. Time from infection to outcome
-#'   (recovery/death); used to truncate the generation-time distribution.
-#'
+#' @param parent_info One-row data.frame/list containing parent infection, hospitalisation and outcome times.
 #' @param mn_offspring_hcw Positive numeric. Mean of the Negative Binomial offspring distribution
 #'   for HCW parents (\code{rnbinom(mu = ..., size = ...)}).
 #' @param overdisp_offspring_hcw Positive numeric. Negative Binomial \code{size} (overdispersion)
 #'   for HCW parents.
-#'
 #' @param Tg_shape_hcw Positive numeric. Shape of the Gamma generation-time distribution
 #'   for HCW parents (before truncation).
 #' @param Tg_rate_hcw Positive numeric. Rate of the Gamma generation-time distribution
 #'   for HCW parents (before truncation). Mean GT is \code{Tg_shape_hcw / Tg_rate_hcw}.
-#'
-#' @param prob_hospital_cond_hcw_preAdm Numeric in \code{[0,1]}. Probability that a **pre-admission**
-#'   candidate infection occurs in the **hospital** setting (while the HCW is working); the
-#'   complementary probability assigns the event to the community.
-#' @param ppe_efficacy_hcw Numeric in \code{[0,1]}. Efficacy of PPE/IPC at reducing **pre-admission
-#'   hospital** transmission; pre-admission hospital keep-probability equals
-#'   \code{1 - ppe_efficacy_hcw}.
-#' @param hospital_quarantine_efficacy Numeric in \code{[0,1]}. Efficacy of **post-admission
-#'   hospital** quarantine at reducing transmission; post-admission hospital keep-probability equals
-#'   \code{1 - hospital_quarantine_efficacy}.
-#'
-#' @param prob_hcw_cond_hcw_comm Numeric in \code{[0,1]}. Probability that a **community**-located
+#' @param prob_hospital_cond_hcw_preAdm Numeric in \code{[0,1]}. Probability that a pre-admission
+#'   candidate infection occurs in the hospital setting while the HCW is working.
+#' @param ppe_efficacy_hcw Numeric in \code{[0,1]} or function(t). Per-PPE-layer efficacy of PPE worn
+#'   by HCWs at reducing hospital transmission. Applied as a source layer when the HCW parent is
+#'   still working pre-admission, and as an independent receiver layer whenever the recipient is an
+#'   HCW; the two combine multiplicatively for pre-admission hospital events with HCW recipients
+#'   (keep-probability \eqn{(1 - \mathrm{ppe})^2}). Resolved at the absolute calendar time of each
+#'   candidate hospital transmission event in which PPE applies.
+#' @param hospital_quarantine_efficacy Optional numeric in \code{[0,1]} or function(t). Direct
+#'   effective hospital admission/ETU/quarantine efficacy at reducing post-admission hospital
+#'   transmission. If supplied, this is used directly and resolved at the absolute calendar time
+#'   of each candidate post-admission hospital infection. If \code{NULL}, efficacy is calculated
+#'   from \code{prop_etu}, \code{ipc_helper}, and \code{etu_efficacy_baseline}.
+#' @param prop_etu Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases managed
+#'   in ETU/ETC care at time \code{t}; used when \code{hospital_quarantine_efficacy = NULL}.
+#' @param ipc_helper Numeric in \code{[0,1]} or function(t). Time-varying IPC/response maturity
+#'   proxy at time \code{t}; used when \code{hospital_quarantine_efficacy = NULL}.
+#' @param etu_efficacy_baseline Numeric between 0 and 1. Baseline transmission-blocking efficacy
+#'   of ETU/ETC care before additional IPC maturity improvements; used when
+#'   \code{hospital_quarantine_efficacy = NULL}.
+#' @param prob_hcw_cond_hcw_comm Numeric in \code{[0,1]}. Probability that a community-located
 #'   offspring generated by an HCW parent is an HCW.
-#' @param prob_hcw_cond_hcw_hospital Numeric in \code{[0,1]}. Probability that a **hospital**-located
+#' @param prob_hcw_cond_hcw_hospital Numeric in \code{[0,1]}. Probability that a hospital-located
 #'   offspring generated by an HCW parent is an HCW.
 #' @export
 offspring_function_hcw <- function(
@@ -58,18 +73,90 @@ offspring_function_hcw <- function(
 
   ## Setting model for HCWs
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that an infection generated prior to parent hospitaliation occurs in the hospital (whilst HCW is working)
-  ppe_efficacy_hcw = NULL,                  # efficacy of PPE/IPC measures at reducing transmission (i.e. pre hospitalisation)
-  hospital_quarantine_efficacy = NULL,      # efficacy of quarantine at reducing transmission (i.e. post hospitalisation)
+  ppe_efficacy_hcw = NULL,                  # scalar or function(t): PPE/IPC efficacy for pre-admission hospital transmission
+  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct hospital efficacy, retained for backwards compatibility
+  prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care
+  ipc_helper = NULL,                        # scalar/function(t): IPC/response maturity proxy
+  etu_efficacy_baseline = NULL,             # scalar: baseline ETU/ETC efficacy before IPC maturity adjustment
 
   ## Probabilities for HCW infecting either genPop or HCWs, depending on the setting
   prob_hcw_cond_hcw_comm = NULL,            # prob that a community-located infection generated by HCW is a HCW
   prob_hcw_cond_hcw_hospital = NULL         # prob that a hospital-located infection generated by HCW is a HCW
 ) {
 
+  ## Local helpers for parameters that can be either scalars or functions of
+  ## absolute calendar time. The actual interpolation is handled by
+  ## resolve_time_varying(), so this function stays scenario-agnostic.
+  validate_probability_or_time_varying <- function(param, param_name) {
+    if (is.function(param)) {
+      return(invisible(NULL))
+    }
+    if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0 || param > 1) {
+      stop(sprintf("`%s` must be a function(t) or a single numeric in [0, 1].", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  validate_probability_scalar <- function(param, param_name) {
+    if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0 || param > 1) {
+      stop(sprintf("`%s` must be a single numeric in [0, 1].", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  resolve_probability <- function(param, t, param_name) {
+    value <- resolve_time_varying(param = param, t = t, param_name = param_name)
+    if (any(value < 0 | value > 1)) {
+      stop(sprintf("`%s` must resolve to value(s) in [0, 1].", param_name), call. = FALSE)
+    }
+    value
+  }
+
+  resolve_hospital_quarantine_efficacy <- function(t) {
+    if (!is.null(hospital_quarantine_efficacy)) {
+      return(resolve_probability(
+        hospital_quarantine_efficacy,
+        t,
+        "hospital_quarantine_efficacy"
+      ))
+    }
+
+    prop_etu_t <- resolve_probability(prop_etu, t, "prop_etu")
+    ipc_helper_t <- resolve_probability(ipc_helper, t, "ipc_helper")
+
+    etu_efficacy_at_t <-
+      etu_efficacy_baseline +
+      (1 - etu_efficacy_baseline) * ipc_helper_t
+
+    if (any(etu_efficacy_at_t < 0 | etu_efficacy_at_t > 1)) {
+      stop(
+        "`etu_efficacy(t)` must resolve to values between 0 and 1.",
+        call. = FALSE
+      )
+    }
+
+    hospital_quarantine_efficacy_t <-
+      prop_etu_t * etu_efficacy_at_t +
+      (1 - prop_etu_t) * ipc_helper_t
+
+    if (any(hospital_quarantine_efficacy_t < 0 |
+            hospital_quarantine_efficacy_t > 1)) {
+      stop(
+        "`hospital_quarantine_efficacy(t)` must resolve to values between 0 and 1.",
+        call. = FALSE
+      )
+    }
+
+    hospital_quarantine_efficacy_t
+  }
+
   # Step 0: Extract relevant parent information from parent_info
   parent_hospitalised = parent_info$hospitalisation                          # whether the parent (infector) is hospitalised or not
   parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
   parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
+  parent_time_infection_absolute = parent_info$time_infection_absolute       # absolute calendar time of parent infection
 
   #########################################################################################
   ## Checks to make sure function inputs are correctly specified
@@ -87,22 +174,36 @@ offspring_function_hcw <- function(
       !is.numeric(parent_time_to_outcome) || is.na(parent_time_to_outcome) || parent_time_to_outcome < 0) {
     stop("`parent_time_to_outcome` must be a single non-negative numeric value (not NA).", call. = FALSE)
   }
+  if (is.null(parent_time_infection_absolute) || length(parent_time_infection_absolute) != 1L ||
+      !is.numeric(parent_time_infection_absolute) || is.na(parent_time_infection_absolute)) {
+    stop("`parent_info$time_infection_absolute` must be a single non-missing numeric value.", call. = FALSE)
+  }
   if (identical(parent_hospitalised, FALSE)) {
     if (!is.na(parent_time_to_hospitalisation)) {
       stop("When `parent_hospitalised` is FALSE, `parent_time_to_hospitalisation` must be NA.", call. = FALSE)
     }
   }
+
   ## Parameter checks (positivity / bounds)
-  for (nm in c("mn_offspring_hcw","overdisp_offspring_hcw","Tg_shape_hcw","Tg_rate_hcw")) {
+  for (nm in c("mn_offspring_hcw", "overdisp_offspring_hcw", "Tg_shape_hcw", "Tg_rate_hcw")) {
     val <- get(nm, inherits = FALSE)
-    if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val <= 0)
+    if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val <= 0) {
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
+    }
   }
-  for (nm in c("prob_hospital_cond_hcw_preAdm","ppe_efficacy_hcw","hospital_quarantine_efficacy",
-               "prob_hcw_cond_hcw_comm","prob_hcw_cond_hcw_hospital")) {
+  for (nm in c("prob_hospital_cond_hcw_preAdm", "prob_hcw_cond_hcw_comm", "prob_hcw_cond_hcw_hospital")) {
     val <- get(nm, inherits = FALSE)
-    if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1)
+    if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1) {
       stop(sprintf("`%s` must be a single numeric value in [0, 1].", nm), call. = FALSE)
+    }
+  }
+  validate_probability_or_time_varying(ppe_efficacy_hcw, "ppe_efficacy_hcw")
+  if (!is.null(hospital_quarantine_efficacy)) {
+    validate_probability_or_time_varying(hospital_quarantine_efficacy, "hospital_quarantine_efficacy")
+  } else {
+    validate_probability_or_time_varying(prop_etu, "prop_etu")
+    validate_probability_or_time_varying(ipc_helper, "ipc_helper")
+    validate_probability_scalar(etu_efficacy_baseline, "etu_efficacy_baseline")
   }
 
   ########################################################################################################
@@ -112,8 +213,20 @@ offspring_function_hcw <- function(
   # Step 1: Draw from offspring distribution to produce raw number of offspring
   num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_hcw, size = overdisp_offspring_hcw)
 
+  if (num_offspring_raw == 0L) {
+    return(data.frame(infection_location = character(0),
+                      time_infection_relative = numeric(0),
+                      class = character(0),
+                      stringsAsFactors = FALSE))
+  }
+
   # Step 2: Generate time of infection for each offspring based on the generation time (truncated at outcome)
-  infection_times <- rtrunc_gamma(n = num_offspring_raw, lower = 0, upper = parent_time_to_outcome, Tg_shape = Tg_shape_hcw, Tg_rate = Tg_rate_hcw)
+  infection_times <- rtrunc_gamma(n = num_offspring_raw,
+                                  lower = 0,
+                                  upper = parent_time_to_outcome,
+                                  Tg_shape = Tg_shape_hcw,
+                                  Tg_rate = Tg_rate_hcw)
+  infection_times_absolute <- parent_time_infection_absolute + infection_times
 
   # Step 3: Generate location of infection, noting that for HCWs, pre-hospitalisation infections can be community *or* hospital (while working). This is
   #         controlled via prob_hospital_cond_hcw_preAdm. Post-hospitalisation events are necessarily hospital.
@@ -123,20 +236,67 @@ offspring_function_hcw <- function(
   is_hosp_pre_admission <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hospital_cond_hcw_preAdm))
   infection_settings <- ifelse(pre_admission, ifelse(is_hosp_pre_admission, "hospital", "community"), "hospital")
 
-  # Step 4: Thin / remove some hospital infections due to PPE (pre-hospitalisation) or quarantine (post-hospitalisation)
-  p_keep_infection <- ifelse(infection_settings == "community", 1, ifelse(pre_admission, 1 - ppe_efficacy_hcw, 1 - hospital_quarantine_efficacy))
+  # Step 4: Assign class (HCW or genPop) to each offspring based on setting. Class is assigned BEFORE
+  #         thinning so that receiver PPE can be applied class-specifically to HCW recipients.
+  offspring_class <- rep("genPop", length(infection_times))
+  prob_hcw <- ifelse(infection_settings == "community", prob_hcw_cond_hcw_comm, prob_hcw_cond_hcw_hospital)
+  flip_hcw <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hcw))
+  offspring_class[flip_hcw] <- "HCW"
+
+  # Step 5: Compute per-event keep probability under three independent protective layers
+  #         (Swiss-cheese multiplicative), each applied only where it is relevant.
+  #   - Source PPE (worn by the still-working HCW parent): applies to all PRE-admission hospital events.
+  #   - Receiver PPE (worn by HCW recipients treating the source): applies to all hospital events with
+  #     an HCW recipient (pre- or post-admission).
+  #   - Hospital quarantine (source is now an isolated HCW patient): applies to all POST-admission
+  #     hospital events. Resolved at the absolute calendar time of each candidate hospital transmission,
+  #     either directly via `hospital_quarantine_efficacy` or via the derived formula:
+  #       etu_efficacy(t) = etu_efficacy_baseline + (1 - etu_efficacy_baseline) * ipc_helper(t)
+  #       hospital_quarantine_efficacy(t) = prop_etu(t) * etu_efficacy(t) + (1 - prop_etu(t)) * ipc_helper(t)
+  #   Hospital keep-probability = (1 - ppe_source) * (1 - ppe_receiver) * (1 - hq), with each factor
+  #   degenerating to 1 where the corresponding layer does not apply.
+  p_keep_infection <- rep(1, length(infection_times))
+  hospital_idx <- which(infection_settings == "hospital")
+  if (length(hospital_idx) > 0) {
+    pre_adm_in_hospital  <- pre_admission[hospital_idx]
+    post_adm_in_hospital <- !pre_adm_in_hospital
+    hcw_recv             <- offspring_class[hospital_idx] == "HCW"
+
+    ppe_source_t <- numeric(length(hospital_idx))
+    if (any(pre_adm_in_hospital)) {
+      ppe_source_t[pre_adm_in_hospital] <- resolve_probability(
+        ppe_efficacy_hcw,
+        infection_times_absolute[hospital_idx[pre_adm_in_hospital]],
+        "ppe_efficacy_hcw"
+      )
+    }
+
+    ppe_recv_t <- numeric(length(hospital_idx))
+    if (any(hcw_recv)) {
+      ppe_recv_t[hcw_recv] <- resolve_probability(
+        ppe_efficacy_hcw,
+        infection_times_absolute[hospital_idx[hcw_recv]],
+        "ppe_efficacy_hcw"
+      )
+    }
+
+    hq_t <- numeric(length(hospital_idx))
+    if (any(post_adm_in_hospital)) {
+      hq_t[post_adm_in_hospital] <- resolve_hospital_quarantine_efficacy(
+        infection_times_absolute[hospital_idx[post_adm_in_hospital]]
+      )
+    }
+
+    p_keep_infection[hospital_idx] <- (1 - ppe_source_t) * (1 - ppe_recv_t) * (1 - hq_t)
+  }
+
+  # Step 6: Thin
   keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
   infection_times <- infection_times[keep_infection]
   infection_settings <- infection_settings[keep_infection]
-  num_offspring_quarantine <- length(infection_times)
+  offspring_class <- offspring_class[keep_infection]
 
-  # Step 5: Assign class (HCW or genPop) to each offspring based on setting (HCW parent)
-  offspring_class <- rep("genPop", num_offspring_quarantine)
-  prob_hcw <- ifelse(infection_settings == "community", prob_hcw_cond_hcw_comm, prob_hcw_cond_hcw_hospital)
-  flip_hcw <- as.logical(rbinom(n = num_offspring_quarantine, size = 1, prob = prob_hcw))
-  offspring_class[flip_hcw] <- "HCW"
-
-  # Step 6: Define and output dataframe with the results
+  # Step 7: Define and output dataframe with the results
   offspring_df <- data.frame(infection_location = infection_settings,
                              time_infection_relative = infection_times,
                              class = offspring_class,
