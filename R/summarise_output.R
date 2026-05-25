@@ -137,8 +137,15 @@ summarise_output <- function(
   ##                 |                 |--- "Policy B: treat only PPE failures" denominator + treated
   ##                 |--- subset of pre_eligible that also survived PPE/quarantine thinning
   ##
-  ## tdf-based "breakthroughs" are realised HCW cases in the linelist who were
-  ## eligible/treated/adherent (i.e. OBV did not prevent their infection).
+  ## tdf-based cohort counters: realised HCW cases in the linelist who were
+  ## eligible / treated / adherent (i.e. OBV did not prevent their infection).
+  ## Only `n_obv_pep_breakthroughs` (= realised cases who received AND adhered
+  ## to OBV) is a clinical "breakthrough" in the vaccine-failure sense; the
+  ## other two are descriptive counts of the eligible/treated cohort that still
+  ## became cases and let you decompose the failure modes:
+  ##   eligible_cases - treated_cases  = HCW cases the coverage gap let through
+  ##   treated_cases  - breakthroughs  = HCW cases the adherence gap let through
+  ##   breakthroughs                   = HCW cases adequate OBV failed to prevent
   ##--------------------------------------------------------------
   obv_treated <- attr(tdf, "obv_pep_num_treated", exact = TRUE)
   if (is.null(obv_treated) && !is.null(sim_info$obv_pep_num_treated)) {
@@ -154,13 +161,13 @@ summarise_output <- function(
   n_obv_pep_prevented     <- if (!is.null(obv_treated)) obv_treated$prevented     else NA_real_
 
   if (!is.null(tdf$obv_pep_eligible)) {
-    n_obv_pep_eligible_breakthroughs <- sum(tdf$obv_pep_eligible & subset_vector, na.rm = TRUE)
-    n_obv_pep_treated_breakthroughs  <- sum(tdf$obv_pep_received & subset_vector, na.rm = TRUE)
-    n_obv_pep_adherent_breakthroughs <- sum(tdf$obv_pep_adherent & subset_vector, na.rm = TRUE)
+    n_obv_pep_eligible_cases <- sum(tdf$obv_pep_eligible & subset_vector, na.rm = TRUE)
+    n_obv_pep_treated_cases  <- sum(tdf$obv_pep_received & subset_vector, na.rm = TRUE)
+    n_obv_pep_breakthroughs  <- sum(tdf$obv_pep_adherent & subset_vector, na.rm = TRUE)
   } else {
-    n_obv_pep_eligible_breakthroughs <- NA_real_
-    n_obv_pep_treated_breakthroughs  <- NA_real_
-    n_obv_pep_adherent_breakthroughs <- NA_real_
+    n_obv_pep_eligible_cases <- NA_real_
+    n_obv_pep_treated_cases  <- NA_real_
+    n_obv_pep_breakthroughs  <- NA_real_
   }
 
   prop_obv_pep_prevented_among_adherent <- if (is.finite(n_obv_pep_post_adherent) &&
@@ -215,9 +222,14 @@ summarise_output <- function(
     n_obv_pep_post_treated            = n_obv_pep_post_treated,
     n_obv_pep_post_adherent           = n_obv_pep_post_adherent,
     n_obv_pep_prevented               = n_obv_pep_prevented,
-    n_obv_pep_eligible_breakthroughs  = n_obv_pep_eligible_breakthroughs,
-    n_obv_pep_treated_breakthroughs   = n_obv_pep_treated_breakthroughs,
-    n_obv_pep_adherent_breakthroughs  = n_obv_pep_adherent_breakthroughs,
+
+    ## OBV PEP tdf-based cohort counters (HCW cases who became cases despite
+    ## being in the eligible / treated / adherent cohort). Only
+    ## `n_obv_pep_breakthroughs` (adherent recipients who still got infected)
+    ## is a clinical "breakthrough" in the vaccine-failure sense.
+    n_obv_pep_eligible_cases          = n_obv_pep_eligible_cases,
+    n_obv_pep_treated_cases           = n_obv_pep_treated_cases,
+    n_obv_pep_breakthroughs           = n_obv_pep_breakthroughs,
     prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent
   )
 
