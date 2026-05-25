@@ -65,5 +65,11 @@ make_time_varying <- function(times, values, method = "linear") {
   }
 
   class(fn) <- c("time_varying_fn", "function")
+  ## Expose breakpoints as attributes so callers (e.g. the upfront sanity
+  ## check in branching_process_main) can build a sampling grid that hits
+  ## every changepoint without having to dig into the approxfun closure.
+  attr(fn, "times") <- times
+  attr(fn, "values") <- values
+  attr(fn, "method") <- method
   return(fn)
 }
