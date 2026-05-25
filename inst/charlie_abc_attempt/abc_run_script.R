@@ -41,7 +41,10 @@ N_WORKERS <- 10
 cl <- makeCluster(N_WORKERS)
 
 # One-time sourcing on each worker.
-clusterEvalQ(cl, source("C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/00_common_time_varying_scenario_setup.R"))
+clusterEvalQ(cl, {
+  source("C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/00_common_time_varying_scenario_setup.R")
+  source("C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/calculate_model_approx_R0.R")
+})
 
 # Tell future to dispatch to this cluster.
 plan(cluster, workers = cl)
@@ -52,6 +55,7 @@ plan(cluster, workers = cl)
 #    build_time_varying_args(), make_gamma_sampler(), and all model functions.
 # ============================================================================
 source("inst/charlie_abc_attempt/00_common_time_varying_scenario_setup.R")
+source("inst/charlie_abc_attempt/calculate_model_approx_R0.R")
 
 # ============================================================================
 # 2. CHOOSE SCENARIO + BUILD FIXED ARGS
@@ -73,15 +77,19 @@ tv_args <- build_time_varying_args(
 scenario_label <- tv_args$scenario_label
 tv_args_model  <- tv_args[setdiff(names(tv_args), c("scenario_label", "scenario_matrix"))]
 
-# Evaluate the time-varying unsafe-funeral-in-community probability at t = 0.
-# This is the conversion constant for the R0 -> mn_offspring_funeral mapping.
-p_unsafe_funeral_comm_t0 <- tv_args_model$p_unsafe_funeral_comm_genPop(0)
-prob_death_comm_fixed    <- base_args$prob_death_comm
-
-cat(sprintf(
-  "Scenario: %s (%s)\n  p_unsafe_funeral_comm_genPop(0) = %.3f\n  prob_death_comm = %.3f\n",
-  SCENARIO_ID, scenario_label, p_unsafe_funeral_comm_t0, prob_death_comm_fixed
-))
+# Compute the direct (D) and funeral (F) R0-multipliers at t = 0 ONCE.
+# These depend only on fixed scenario inputs at t = 0, not on the 3 fitted
+# parameters, so we can divide by them inside build_model_args.
+# R0 = 1 and prop_funeral = 0.5 are dummies; only D and F are extracted.
+setup_solve <- solve_offspring_means_for_R0(
+  R0                                    = 1.0,
+  args                                  = c(base_args, tv_args_model),
+  proportion_transmission_from_funerals = 0.5,
+  n                                     = 100000,    # tight MC noise for one-off cost
+  seed                                  = 42
+)
+D_direct_multiplier  <- setup_solve$D_direct_multiplier
+F_funeral_multiplier <- setup_solve$F_funeral_multiplier
 
 base_args$check_final_size <- 30000
 
@@ -92,22 +100,24 @@ base_args$check_final_size <- 30000
 # ============================================================================
 ### Note the arbitrary choice of seeding cases, something we need to be wary of
 build_model_args <- function(R0, prop_funeral, prob_hcw_cond_genPop_comm,
-                             base = base_args, tv = tv_args_model, seeding_cases = 15) {
+                             base = base_args, tv = tv_args_model,
+                             seeding_cases = 15,
+                             D = D_direct_multiplier,
+                             F_fun = F_funeral_multiplier) {
 
-  mn_genPop  <- R0 * (1 - prop_funeral)
-  mn_funeral <- R0 * prop_funeral / (prob_death_comm_fixed * p_unsafe_funeral_comm_t0)
+  mn_genPop  <- (1 - prop_funeral) * R0 / D
+  mn_funeral <-      prop_funeral  * R0 / F_fun
 
   args <- c(base, tv)
   args$mn_offspring_genPop       <- mn_genPop
   args$mn_offspring_funeral      <- mn_funeral
   args$prob_hcw_cond_genPop_comm <- prob_hcw_cond_genPop_comm
-  # mn_offspring_hcw left at the fixed default (e.g. 0.20)
-  args$seed <- NULL
-  args$seeding_cases <- seeding_cases
+  args$seed                      <- NULL
+  args$seeding_cases             <- seeding_cases
   args
 }
 
-x <- build_model_args(R0 = 1.5, prop_funeral = 0.35, prob_hcw_cond_genPop_comm = 0.02, base = base_args, tv = tv_args_model)
+x <- build_model_args(R0 = 1.7, prop_funeral = 0.25, prob_hcw_cond_genPop_comm = 0.02, base = base_args, tv = tv_args_model)
 x$mn_offspring_genPop
 x$mn_offspring_funeral
 
@@ -207,7 +217,7 @@ observed_summaries <- c(
 
 priors <- list(
   c("unif", 1.2, 1.6),    # R0
-  c("unif", 0.05, 0.5),    # prop_funeral
+  c("unif", 0.1, 0.5),    # prop_funeral
   c("unif", 0.025, 0.05)     # prob_hcw_cond_genPop_comm
 )
 
