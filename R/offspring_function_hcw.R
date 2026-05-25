@@ -7,13 +7,24 @@
 #' may occur in the **hospital** (while working) or in the **community**: each pre-admission
 #' event is assigned to the hospital with probability \code{prob_hospital_cond_hcw_preAdm}
 #' and to the community otherwise. Candidate events occurring at or after the parent's
-#' hospitalisation time are always labelled \code{"hospital"}. Hospital-setting events are then
-#' thinned to reflect protection before admission (PPE/IPC) and quarantine after admission.
-#' Pre-admission PPE/IPC efficacy is resolved at the absolute calendar time of each candidate
-#' pre-admission hospital transmission event. Post-admission hospital quarantine efficacy is
-#' resolved at candidate hospital transmission times and can either be supplied directly or
-#' calculated internally from ETU/ETC coverage, IPC maturity, and baseline ETU efficacy.
-#' Finally, each offspring is assigned a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities.
+#' hospitalisation time are always labelled \code{"hospital"}. Each offspring is then assigned
+#' a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities, and hospital
+#' events are thinned by three multiplicatively-combined protective layers, each applied only
+#' where it is relevant:
+#' \itemize{
+#'   \item Source PPE worn by the still-working HCW parent applies to all pre-admission
+#'         hospital events (any recipient class).
+#'   \item Receiver PPE worn by HCW recipients while treating the source applies to all
+#'         hospital events with an HCW recipient (pre- or post-admission).
+#'   \item Hospital quarantine applies to all post-admission hospital events (source is now
+#'         a hospitalised, isolated HCW patient).
+#' }
+#' Hospital keep-probability is therefore
+#' \eqn{(1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])}.
+#' All time-varying efficacies are resolved at the absolute calendar time of each candidate
+#' hospital transmission event. Post-admission hospital quarantine efficacy can either be
+#' supplied directly or calculated internally from ETU/ETC coverage, IPC maturity, and baseline
+#' ETU efficacy.
 #'
 #' @param parent_info One-row data.frame/list containing parent infection, hospitalisation and outcome times.
 #' @param mn_offspring_hcw Positive numeric. Mean of the Negative Binomial offspring distribution
@@ -26,9 +37,12 @@
 #'   for HCW parents (before truncation). Mean GT is \code{Tg_shape_hcw / Tg_rate_hcw}.
 #' @param prob_hospital_cond_hcw_preAdm Numeric in \code{[0,1]}. Probability that a pre-admission
 #'   candidate infection occurs in the hospital setting while the HCW is working.
-#' @param ppe_efficacy_hcw Numeric in \code{[0,1]} or function(t). Efficacy of PPE/IPC at reducing
-#'   pre-admission hospital transmission. If a function, it is resolved at the absolute calendar
-#'   time of each candidate pre-admission hospital infection.
+#' @param ppe_efficacy_hcw Numeric in \code{[0,1]} or function(t). Per-PPE-layer efficacy of PPE worn
+#'   by HCWs at reducing hospital transmission. Applied as a source layer when the HCW parent is
+#'   still working pre-admission, and as an independent receiver layer whenever the recipient is an
+#'   HCW; the two combine multiplicatively for pre-admission hospital events with HCW recipients
+#'   (keep-probability \eqn{(1 - \mathrm{ppe})^2}). Resolved at the absolute calendar time of each
+#'   candidate hospital transmission event in which PPE applies.
 #' @param hospital_quarantine_efficacy Optional numeric in \code{[0,1]} or function(t). Direct
 #'   effective hospital admission/ETU/quarantine efficacy at reducing post-admission hospital
 #'   transmission. If supplied, this is used directly and resolved at the absolute calendar time
@@ -239,48 +253,67 @@ offspring_function_hcw <- function(
   is_hosp_pre_admission <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hospital_cond_hcw_preAdm))
   infection_settings <- ifelse(pre_admission, ifelse(is_hosp_pre_admission, "hospital", "community"), "hospital")
 
-  # Step 4: Thin / remove some hospital infections due to PPE (pre-hospitalisation) or quarantine (post-hospitalisation).
-  #         Time-varying efficacies are resolved at the absolute calendar time of
-  #         each candidate hospital transmission event. Post-admission hospital
-  #         quarantine efficacy is either supplied directly or calculated from
-  #         prop_etu(t), ipc_helper(t), and etu_efficacy_baseline:
-  #           etu_efficacy(t) = etu_efficacy_baseline +
-  #             (1 - etu_efficacy_baseline) * ipc_helper(t)
-  #           hospital_quarantine_efficacy(t) =
-  #             prop_etu(t) * etu_efficacy(t) +
-  #             (1 - prop_etu(t)) * ipc_helper(t)
+  # Step 4: Assign class (HCW or genPop) to each offspring based on setting. Class is assigned BEFORE
+  #         thinning so that receiver PPE can be applied class-specifically to HCW recipients.
+  offspring_class <- rep("genPop", length(infection_times))
+  prob_hcw <- ifelse(infection_settings == "community", prob_hcw_cond_hcw_comm, prob_hcw_cond_hcw_hospital)
+  flip_hcw <- as.logical(rbinom(n = length(infection_times), size = 1, prob = prob_hcw))
+  offspring_class[flip_hcw] <- "HCW"
+
+  # Step 5: Compute per-event keep probability under three independent protective layers
+  #         (Swiss-cheese multiplicative), each applied only where it is relevant.
+  #   - Source PPE (worn by the still-working HCW parent): applies to all PRE-admission hospital events.
+  #   - Receiver PPE (worn by HCW recipients treating the source): applies to all hospital events with
+  #     an HCW recipient (pre- or post-admission).
+  #   - Hospital quarantine (source is now an isolated HCW patient): applies to all POST-admission
+  #     hospital events. Resolved at the absolute calendar time of each candidate hospital transmission,
+  #     either directly via `hospital_quarantine_efficacy` or via the derived formula:
+  #       etu_efficacy(t) = etu_efficacy_baseline + (1 - etu_efficacy_baseline) * ipc_helper(t)
+  #       hospital_quarantine_efficacy(t) = prop_etu(t) * etu_efficacy(t) + (1 - prop_etu(t)) * ipc_helper(t)
+  #   Hospital keep-probability = (1 - ppe_source) * (1 - ppe_receiver) * (1 - hq), with each factor
+  #   degenerating to 1 where the corresponding layer does not apply.
   p_keep_infection <- rep(1, length(infection_times))
+  hospital_idx <- which(infection_settings == "hospital")
+  if (length(hospital_idx) > 0) {
+    pre_adm_in_hospital  <- pre_admission[hospital_idx]
+    post_adm_in_hospital <- !pre_adm_in_hospital
+    hcw_recv             <- offspring_class[hospital_idx] == "HCW"
 
-  hospital_pre_admission <- infection_settings == "hospital" & pre_admission
-  if (any(hospital_pre_admission)) {
-    ppe_efficacy_hcw_t <- resolve_probability(
-      ppe_efficacy_hcw,
-      infection_times_absolute[hospital_pre_admission],
-      "ppe_efficacy_hcw"
-    )
-    p_keep_infection[hospital_pre_admission] <- 1 - ppe_efficacy_hcw_t
+    ppe_source_t <- numeric(length(hospital_idx))
+    if (any(pre_adm_in_hospital)) {
+      ppe_source_t[pre_adm_in_hospital] <- resolve_probability(
+        ppe_efficacy_hcw,
+        infection_times_absolute[hospital_idx[pre_adm_in_hospital]],
+        "ppe_efficacy_hcw"
+      )
+    }
+
+    ppe_recv_t <- numeric(length(hospital_idx))
+    if (any(hcw_recv)) {
+      ppe_recv_t[hcw_recv] <- resolve_probability(
+        ppe_efficacy_hcw,
+        infection_times_absolute[hospital_idx[hcw_recv]],
+        "ppe_efficacy_hcw"
+      )
+    }
+
+    hq_t <- numeric(length(hospital_idx))
+    if (any(post_adm_in_hospital)) {
+      hq_t[post_adm_in_hospital] <- resolve_hospital_quarantine_efficacy(
+        infection_times_absolute[hospital_idx[post_adm_in_hospital]]
+      )
+    }
+
+    p_keep_infection[hospital_idx] <- (1 - ppe_source_t) * (1 - ppe_recv_t) * (1 - hq_t)
   }
 
-  hospital_post_admission <- infection_settings == "hospital" & !pre_admission
-  if (any(hospital_post_admission)) {
-    hospital_quarantine_efficacy_t <- resolve_hospital_quarantine_efficacy(
-      infection_times_absolute[hospital_post_admission]
-    )
-    p_keep_infection[hospital_post_admission] <- 1 - hospital_quarantine_efficacy_t
-  }
-
+  # Step 6: Thin
   keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
   infection_times <- infection_times[keep_infection]
   infection_settings <- infection_settings[keep_infection]
-  num_offspring_quarantine <- length(infection_times)
+  offspring_class <- offspring_class[keep_infection]
 
-  # Step 5: Assign class (HCW or genPop) to each offspring based on setting (HCW parent)
-  offspring_class <- rep("genPop", num_offspring_quarantine)
-  prob_hcw <- ifelse(infection_settings == "community", prob_hcw_cond_hcw_comm, prob_hcw_cond_hcw_hospital)
-  flip_hcw <- as.logical(rbinom(n = num_offspring_quarantine, size = 1, prob = prob_hcw))
-  offspring_class[flip_hcw] <- "HCW"
-
-  # Step 6: Apply OBV PEP gate after class assignment. This is deliberately
+  # Step 7: Apply OBV PEP gate after class assignment. This is deliberately
   #         downstream of PPE/IPC and post-admission quarantine/ETU thinning.
   obv_gate <- apply_obv_pep_gate(
     infection_location = infection_settings,
@@ -299,7 +332,7 @@ offspring_function_hcw <- function(
   offspring_class <- offspring_class[obv_gate$keep]
   obv_metadata <- obv_gate$metadata[obv_gate$keep, , drop = FALSE]
 
-  # Step 7: Define and output dataframe with the results
+  # Step 8: Define and output dataframe with the results
   offspring_df <- data.frame(infection_location = infection_settings,
                              time_infection_relative = infection_times,
                              class = offspring_class,

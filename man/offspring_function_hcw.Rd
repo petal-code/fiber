@@ -44,9 +44,12 @@ for HCW parents (before truncation). Mean GT is \code{Tg_shape_hcw / Tg_rate_hcw
 \item{prob_hospital_cond_hcw_preAdm}{Numeric in \code{[0,1]}. Probability that a pre-admission
 candidate infection occurs in the hospital setting while the HCW is working.}
 
-\item{ppe_efficacy_hcw}{Numeric in \code{[0,1]} or function(t). Efficacy of PPE/IPC at reducing
-pre-admission hospital transmission. If a function, it is resolved at the absolute calendar
-time of each candidate pre-admission hospital infection.}
+\item{ppe_efficacy_hcw}{Numeric in \code{[0,1]} or function(t). Per-PPE-layer efficacy of PPE worn
+by HCWs at reducing hospital transmission. Applied as a source layer when the HCW parent is
+still working pre-admission, and as an independent receiver layer whenever the recipient is an
+HCW; the two combine multiplicatively for pre-admission hospital events with HCW recipients
+(keep-probability \eqn{(1 - \mathrm{ppe})^2}). Resolved at the absolute calendar time of each
+candidate hospital transmission event in which PPE applies.}
 
 \item{hospital_quarantine_efficacy}{Optional numeric in \code{[0,1]} or function(t). Direct
 effective hospital admission/ETU/quarantine efficacy at reducing post-admission hospital
@@ -96,11 +99,22 @@ on \eqn{[0, t_\mathrm{outcome}]}. For HCW parents, \strong{pre-admission} candid
 may occur in the \strong{hospital} (while working) or in the \strong{community}: each pre-admission
 event is assigned to the hospital with probability \code{prob_hospital_cond_hcw_preAdm}
 and to the community otherwise. Candidate events occurring at or after the parent's
-hospitalisation time are always labelled \code{"hospital"}. Hospital-setting events are then
-thinned to reflect protection before admission (PPE/IPC) and quarantine after admission.
-Pre-admission PPE/IPC efficacy is resolved at the absolute calendar time of each candidate
-pre-admission hospital transmission event. Post-admission hospital quarantine efficacy is
-resolved at candidate hospital transmission times and can either be supplied directly or
-calculated internally from ETU/ETC coverage, IPC maturity, and baseline ETU efficacy.
-Finally, each offspring is assigned a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities.
+hospitalisation time are always labelled \code{"hospital"}. Each offspring is then assigned
+a class (\code{"HCW"} or \code{"genPop"}) using setting-specific probabilities, and hospital
+events are thinned by three multiplicatively-combined protective layers, each applied only
+where it is relevant:
+\itemize{
+\item Source PPE worn by the still-working HCW parent applies to all pre-admission
+hospital events (any recipient class).
+\item Receiver PPE worn by HCW recipients while treating the source applies to all
+hospital events with an HCW recipient (pre- or post-admission).
+\item Hospital quarantine applies to all post-admission hospital events (source is now
+a hospitalised, isolated HCW patient).
+}
+Hospital keep-probability is therefore
+\eqn{(1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])}.
+All time-varying efficacies are resolved at the absolute calendar time of each candidate
+hospital transmission event. Post-admission hospital quarantine efficacy can either be
+supplied directly or calculated internally from ETU/ETC coverage, IPC maturity, and baseline
+ETU efficacy.
 }
