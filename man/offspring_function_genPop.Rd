@@ -73,6 +73,7 @@ dose. The simplest working assumption is \code{obv_pep_dpc = 1}.}
 
 \item{obv_pep_target_locations}{Character vector of exposure settings eligible for OBV PEP.
 Defaults to \code{"hospital"} for HCW PEP.}
+
 \item{ppe_efficacy_hcw}{Numeric in \code{[0,1]} or function(t). Efficacy of PPE worn by HCW
 recipients while treating the hospitalised genPop parent. Applied multiplicatively on top of
 \code{hospital_quarantine_efficacy} for hospital transmissions to HCW recipients only; resolved
