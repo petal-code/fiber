@@ -14,9 +14,9 @@ rtrunc_gamma <- function(n, lower = -Inf, upper = Inf, Tg_shape, Tg_rate) {
 ## Build a sampling grid for the upfront sanity check on time-varying
 ## probability parameters. For any inputs that came from make_time_varying(),
 ## we include the breakpoints (and midpoints) so the grid covers every
-## changepoint. Falls back to an evenly spaced grid on [0, tf] (or 0–365 if
-## tf is infinite) when no time-varying inputs are supplied.
-build_sanity_grid <- function(params, tf = NULL) {
+## changepoint. Falls back to an evenly spaced 0–365 grid when no
+## time-varying inputs are supplied.
+build_sanity_grid <- function(params) {
   breakpoints <- numeric(0)
   for (p in params) {
     if (inherits(p, "time_varying_fn")) {
@@ -40,8 +40,7 @@ build_sanity_grid <- function(params, tf = NULL) {
     bp <- breakpoints[1]
     sort(unique(c(0, bp - 1, bp, bp + 1, max(bp + 10, 100))))
   } else {
-    upper <- if (!is.null(tf) && is.finite(tf)) tf else 365
-    seq(0, upper, length.out = 50)
+    seq(0, 365, length.out = 50)
   }
 }
 

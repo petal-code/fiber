@@ -75,7 +75,6 @@ branching_process_main <- function(
   prob_hcw_cond_funeral_genPop = NULL, ## DESCRIPTION NEEDED HERE
 
   ## Misc
-  tf = Inf,
   population,
   hcw_per_capita = 10,
   check_final_size,
@@ -143,7 +142,7 @@ branching_process_main <- function(
   ###
   ### Sample each probability parameter on a grid built from the
   ### make_time_varying breakpoints (where supplied) plus midpoints, or
-  ### a default 0..tf grid otherwise. This catches curves that resolve
+  ### a default 0..365 grid otherwise. This catches curves that resolve
   ### outside [0, 1] somewhere in the simulation horizon before the
   ### simulation starts, rather than mid-run with a cryptic error.
   ###
@@ -164,7 +163,7 @@ branching_process_main <- function(
     prop_etu                      = prop_etu,
     ipc_helper                    = ipc_helper
   )
-  sanity_grid <- build_sanity_grid(sanity_params, tf = tf)
+  sanity_grid <- build_sanity_grid(sanity_params)
 
   for (nm in names(sanity_params)) {
     check_probability_on_grid(sanity_params[[nm]], sanity_grid, nm)
