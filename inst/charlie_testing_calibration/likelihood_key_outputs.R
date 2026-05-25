@@ -12,7 +12,8 @@
 #'
 #' @param tdf            Transmission data frame from `branching_process_main()`.
 #' @param observed       Named list with entries matching the names returned
-#'                       by `key_outputs()` for every metric being fitted.
+#'                       by `summarise_output()` for every metric being fitted
+#'                       (e.g. `n_cases_total`, `duration_10th_death_to_last_outcome`).
 #' @param fit_n_cases_total,fit_n_deaths_total,fit_n_deaths_HCW Logical
 #'                       fit flags for the three count metrics.
 #' @param fit_duration_first,fit_duration_10th,fit_duration_25th Logical
@@ -125,7 +126,7 @@ likelihood_key_outputs <- function(
   }
 
   ## ---- Compute the model summary ----------------------------------------
-  out <- key_outputs(tdf)
+  out <- summarise_output(tdf)
 
   ## ---- Per-metric log-likelihood contributions --------------------------
   contributions <- c(
