@@ -50,20 +50,20 @@ source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
 
 # ---- Cluster setup (run ONCE; reuse for all parallel work) ------------------
 
-N_WORKERS <- 10
-cl <- makeCluster(N_WORKERS)
-clusterExport(cl, c("PACKAGE_ROOT", "ABC_DIR"))
-
-# One-time sourcing on each worker.
-clusterEvalQ(cl, {
-  setwd(PACKAGE_ROOT)   # so SCRIPT_DIR in the setup file resolves to <root>/R/
-  source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
-  source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
-})
-
-
-# Tell future to dispatch to this cluster.
-plan(cluster, workers = cl)
+# N_WORKERS <- 10
+# cl <- makeCluster(N_WORKERS)
+# clusterExport(cl, c("PACKAGE_ROOT", "ABC_DIR"))
+#
+# # One-time sourcing on each worker.
+# clusterEvalQ(cl, {
+#   setwd(PACKAGE_ROOT)   # so SCRIPT_DIR in the setup file resolves to <root>/R/
+#   source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
+#   source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
+# })
+#
+#
+# # Tell future to dispatch to this cluster.
+# plan(cluster, workers = cl)
 
 # ============================================================================
 # 1. SOURCE THE COMMON SETUP
@@ -214,7 +214,7 @@ observed_summaries <- c(
 
 priors <- list(
   c("unif", 1.35,  1.55),    # R0
-  c("unif", 0.1,  0.3),    # prop_funeral
+  c("unif", 0.1,  0.4),    # prop_funeral
   c("unif", 0.20, 0.80)    # prob_hcw_cond_genPop_hospital
 )
 
@@ -423,16 +423,16 @@ pairs(posterior, pch = 16, cex = 0.5,
       col = adjustcolor("steelblue", alpha = 0.4))
 
 saveRDS(result,
-        file = paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
+        file = paste0("fiber_abc_smc_result_", SCENARIO_ID, "_phase2.rds"))
+
+# Move Phase 1 outputs out of the way (run this before launching Phase 2)
+# dir.create(file.path(PACKAGE_ROOT, "phase1_outputs"), showWarnings = FALSE)
+# files_to_move <- list.files(PACKAGE_ROOT,
+#                             pattern = "^(output_step|tolerance_step|n_simul_tot_step)[0-9]+$",
+#                             full.names = TRUE)
+# file.rename(files_to_move,
+#             file.path(PACKAGE_ROOT, "phase1_outputs", basename(files_to_move)))
+# file.rename(file.path(PACKAGE_ROOT, "fiber_abc_smc_result_Worst_WestAfrica.rds"),
+#             file.path(PACKAGE_ROOT, "fiber_abc_smc_result_Worst_WestAfrica_phase1.rds"))
 
 
-posterior_median <- c(R0 = 1.45, prop_funeral = 0.21, p_hcw_hosp = 0.43)
-reps_test <- replicate(50, {
-  set.seed(NULL)
-  fiber_abc_model_parallel(c(round(runif(1) * 1e9),
-                             posterior_median[1],
-                             posterior_median[2],
-                             posterior_median[3]))
-})
-# Coefficient of variation per summary statistic:
-apply(reps_test, 1, function(x) sd(x) / mean(x))

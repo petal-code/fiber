@@ -161,3 +161,144 @@ step_times <- file.info(step_files)$mtime
 data.frame(file = basename(step_files),
            finished = step_times,
            gap = c(NA, diff(step_times)))
+
+reconstruct_abc_result <- function(dir = getwd(), step = NULL) {
+
+  step_num <- function(f) as.integer(sub(".*_step([0-9]+)$", "\\1", f))
+
+  out_files <- list.files(dir, pattern = "^output_step[0-9]+$", full.names = TRUE)
+  out_files <- out_files[order(step_num(out_files))]
+
+  if (length(out_files) == 0L) stop("No output_step files found in ", dir)
+
+  # Use the latest completed step unless user specifies one
+  if (is.null(step)) {
+    target_file <- out_files[length(out_files)]
+    step <- step_num(target_file)
+  } else {
+    target_file <- file.path(dir, paste0("output_step", step))
+    if (!file.exists(target_file)) stop("output_step", step, " not found")
+  }
+
+  message("Reconstructing result from step ", step)
+
+  # Read the particle population
+  df <- read.table(target_file, header = FALSE)
+  colnames(df) <- c("weight", "R0", "prop_funeral", "p_hcw_hosp",
+                    "takeoff", "n_deaths", "n_hcw_deaths", "duration")
+
+  # Get tolerance for this step (NA if step 1)
+  tol_file <- file.path(dir, paste0("tolerance_step", step))
+  epsilon <- if (file.exists(tol_file)) as.numeric(readLines(tol_file)) else NA_real_
+
+  # Get cumulative simulation count
+  sim_file <- file.path(dir, paste0("n_simul_tot_step", step))
+  nsim <- if (file.exists(sim_file)) as.numeric(readLines(sim_file)) else NA_real_
+
+  # Recompute normalization SDs from step 1 (matches what EasyABC uses)
+  step1_file <- file.path(dir, "output_step1")
+  if (file.exists(step1_file)) {
+    step1 <- read.table(step1_file, header = FALSE)
+    stats_norm <- apply(step1[, 5:8], 2, sd)
+  } else {
+    stats_norm <- apply(df[, 5:8], 2, sd)
+  }
+
+  list(
+    param               = as.matrix(df[, c("R0", "prop_funeral", "p_hcw_hosp")]),
+    stats               = as.matrix(df[, c("takeoff", "n_deaths", "n_hcw_deaths", "duration")]),
+    weights             = df$weight / sum(df$weight),
+    stats_normalization = as.numeric(stats_norm),
+    epsilon             = epsilon,
+    nsim                = nsim,
+    computime           = NA_real_,           # not recoverable from files
+    step_reconstructed_from = step
+  )
+}
+
+# Reconstruct from the latest completed step (step 5 in your case)
+result <- reconstruct_abc_result(PACKAGE_ROOT)
+
+# Or specify a particular step
+result <- reconstruct_abc_result(PACKAGE_ROOT, step = 5)
+
+# Now use it the same way as a real ABC_sequential result
+posterior <- as.data.frame(result$param)
+colnames(posterior) <- c("R0", "prop_funeral", "prob_hcw_hosp")
+
+print(apply(posterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
+
+# All the downstream plotting code from section 10 works unchanged
+par(mfrow = c(1, 3))
+for (j in seq_len(ncol(posterior))) {
+  hist(posterior[, j], breaks = 30, main = colnames(posterior)[j])
+  abline(v = quantile(posterior[, j], c(0.025, 0.5, 0.975)),
+         lty = c(2, 1, 2), col = "red")
+}
+par(mfrow = c(1, 1))
+pairs(posterior, pch = 16, cex = 0.5, col = adjustcolor("steelblue", alpha = 0.4))
+
+
+
+# === Posterior-predictive check ===
+
+sim_stats <- as.data.frame(result$stats)
+colnames(sim_stats) <- c("takeoff", "n_deaths", "n_hcw_deaths", "duration")
+
+# Resample by weights so the histogram reflects the weighted posterior
+set.seed(1)
+idx <- sample(seq_len(nrow(sim_stats)),
+              size    = 10000,
+              replace = TRUE,
+              prob    = result$weights)
+sim_stats_post <- sim_stats[idx, ]
+
+# Observed values (matches your script)
+observed <- c(takeoff      = 1.0,
+              n_deaths     = 11325,
+              n_hcw_deaths = 513,
+              duration     = 365)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+for (s in names(observed)) {
+  x  <- sim_stats_post[[s]]
+  qs <- quantile(x, probs = c(0.025, 0.5, 0.975))
+
+  hist(x,
+       breaks = 10,
+       main   = paste0("Posterior predictive: ", s),
+       xlab   = s,
+       col    = adjustcolor("steelblue", alpha = 0.6),
+       border = "white")
+
+  # Posterior median (solid) and 95% CI (dashed)
+  abline(v = qs, col = "darkblue", lty = c(2, 1, 2), lwd = c(1, 2, 1))
+
+  # Observed value
+  abline(v = observed[s], col = "red", lwd = 2.5)
+
+  legend("topleft",
+         legend = c(paste0("Observed: ",  signif(observed[s], 3)),
+                    paste0("Median: ",    signif(qs[2], 3)),
+                    paste0("95% CI: [",   signif(qs[1], 3), ", ", signif(qs[3], 3), "]")),
+         col    = c("red", "darkblue", NA),
+         lty    = c(1, 1, NA),
+         lwd    = c(2.5, 2, NA),
+         bty    = "n",
+         cex    = 0.75)
+}
+par(mfrow = c(1, 1))
+
+# Single-panel summary: simulated vs observed, log scale where useful
+par(mfrow = c(1, 1))
+plot(NA, xlim = c(0.5, 4.5), ylim = c(0, 1.5),
+     xaxt = "n", xlab = "", ylab = "Simulated / Observed",
+     main = "Posterior-predictive fit ratio")
+axis(1, at = 1:4, labels = names(observed))
+abline(h = 1, lty = 2, col = "red")
+for (i in seq_along(observed)) {
+  x   <- sim_stats_post[[names(observed)[i]]] / observed[names(observed)[i]]
+  qs  <- quantile(x, c(0.025, 0.5, 0.975))
+  segments(i, qs[1], i, qs[3], lwd = 2, col = "darkblue")
+  points(i, qs[2], pch = 16, cex = 1.5, col = "darkblue")
+}
