@@ -36,6 +36,18 @@ library(parallel)
 library(progressr)
 handlers("progress")   # nice text progress bar with ETA
 
+PACKAGE_ROOT <- switch(
+  Sys.info()[["user"]],
+  "cwhittaker" = "C:/Users/cwhittaker/Documents/Research Projects/fiber",
+  "PETAL_WS_2" = "C:/Users/PETAL_WS_2/Documents/fiber",
+  stop("Unknown user — add this machine.")
+)
+ABC_DIR <- file.path(PACKAGE_ROOT, "inst", "charlie_abc_attempt")
+setwd(PACKAGE_ROOT)
+
+source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
+source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
+
 # ---- Cluster setup (run ONCE; reuse for all parallel work) ------------------
 
 N_WORKERS <- 10
@@ -43,9 +55,10 @@ cl <- makeCluster(N_WORKERS)
 
 # One-time sourcing on each worker.
 clusterEvalQ(cl, {
-  source("C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/00_common_time_varying_scenario_setup.R")
-  source("C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/calculate_model_approx_R0.R")
+  source(file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R"))
+  source(file.path(ABC_DIR, "calculate_model_approx_R0.R"))
 })
+
 
 # Tell future to dispatch to this cluster.
 plan(cluster, workers = cl)
@@ -64,7 +77,7 @@ source("inst/charlie_abc_attempt/calculate_model_approx_R0.R")
 # ============================================================================
 
 SCENARIO_ID  <- "Worst_WestAfrica"
-SCENARIO_CSV <- "C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/final_four_scenario_values.csv"
+SCENARIO_CSV <- "inst/charlie_abc_attempt/final_four_scenario_values.csv"
 scenario_matrix <- read_scenario_matrix(SCENARIO_CSV)
 
 base_args <- make_base_args(scalar_inputs = DEFAULT_SCALAR_INPUTS)
@@ -282,6 +295,10 @@ system.time(pp_par <- prior_predictive_check(20, parallel = TRUE, n_replicates =
 set.seed(1)
 system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates = 5))
 
+parallel::stopCluster(cl)
+future::plan(sequential)
+rm(cl)
+gc()
 
 # prior_predictive_check(n_draws = 1000, prior_list = priors)
 # set.seed(1)
@@ -294,19 +311,115 @@ system.time(pp_ser <- prior_predictive_check(20, parallel = FALSE, n_replicates 
 # 9. RUN ABC-SMC (Del Moral et al. 2012 adaptive algorithm)
 # ============================================================================
 
+fiber_abc_model_parallel <- function(theta_with_seed) {
+
+  # ---- Worker self-bootstrap (runs once per worker on first call) ----
+  if (!exists(".fiber_worker_ready", envir = globalenv(), inherits = FALSE)) {
+
+    # ---- Per-machine paths ----
+    PACKAGE_ROOT <- switch(
+      Sys.info()[["user"]],
+      "cwhittaker" = "C:/Users/cwhittaker/Documents/Research Projects/fiber",
+      "PETAL_WS_2" = "C:/Users/PETAL_WS_2/Documents/fiber",
+      stop("Unknown user: ", Sys.info()[["user"]],
+           ". Add this machine to the PACKAGE_ROOT switch.")
+    )
+
+    ABC_DIR      <- file.path(PACKAGE_ROOT, "inst", "charlie_abc_attempt")
+    SETUP_PATH   <- file.path(ABC_DIR, "00_common_time_varying_scenario_setup.R")
+    R0_PATH      <- file.path(ABC_DIR, "calculate_model_approx_R0.R")
+    SCENARIO_CSV <- file.path(ABC_DIR, "final_four_scenario_values.csv")
+    SCENARIO_ID  <- "Worst_WestAfrica"
+
+    setwd(PACKAGE_ROOT)
+    source(SETUP_PATH)
+    source(R0_PATH)
+
+    scenario_matrix <- read_scenario_matrix(SCENARIO_CSV)
+    base_args <- make_base_args(scalar_inputs = DEFAULT_SCALAR_INPUTS)
+    base_args$check_final_size <- 30000
+
+    tv_args <- build_time_varying_args(
+      scenario_id           = SCENARIO_ID,
+      matrix                = scenario_matrix,
+      etu_efficacy_baseline = DEFAULT_SCALAR_INPUTS$etu_efficacy_baseline
+    )
+    tv_args_model <- tv_args[setdiff(names(tv_args),
+                                     c("scenario_label", "scenario_matrix"))]
+
+    setup_solve <- solve_offspring_means_for_R0(
+      R0   = 1.0,
+      args = c(base_args, tv_args_model),
+      proportion_transmission_from_funerals = 0.5,
+      n    = 100000,
+      seed = 42
+    )
+
+    # Stash everything in globalenv so subsequent calls find them
+    assign("base_args",               base_args,                          envir = globalenv())
+    assign("tv_args_model",           tv_args_model,                      envir = globalenv())
+    assign("D_direct_multiplier",     setup_solve$D_direct_multiplier,    envir = globalenv())
+    assign("F_funeral_multiplier",    setup_solve$F_funeral_multiplier,   envir = globalenv())
+    assign("TAKEOFF_DEATH_THRESHOLD", 100,                                envir = globalenv())
+    assign(".fiber_worker_ready",     TRUE,                               envir = globalenv())
+  }
+
+  # ---- Per-call logic ----
+  # First element is the seed (because use_seed = TRUE)
+  set.seed(theta_with_seed[1])
+
+  R0           <- theta_with_seed[2]
+  prop_funeral <- theta_with_seed[3]
+  p_hcw_hosp   <- theta_with_seed[4]
+
+  mn_genPop  <- (1 - prop_funeral) * R0 / D_direct_multiplier
+  mn_funeral <-      prop_funeral  * R0 / F_funeral_multiplier
+
+  args <- c(base_args, tv_args_model)
+  args$mn_offspring_genPop           <- mn_genPop
+  args$mn_offspring_funeral          <- mn_funeral
+  args$prob_hcw_cond_genPop_hospital <- p_hcw_hosp
+  args$seed                          <- NULL
+  args$seeding_cases                 <- 25
+
+  N_REPS <- 10
+  reps <- vapply(seq_len(N_REPS), function(i) {
+    out <- do.call(branching_process_main, args)
+    abc_summarise(out)
+  }, numeric(4))
+  rownames(reps) <- c("n_cases", "n_deaths", "n_hcw_deaths", "duration")
+
+  took_off <- reps["n_deaths", ] >= TAKEOFF_DEATH_THRESHOLD
+  if (!any(took_off)) {
+    return(c(takeoff = 0, n_deaths = 0, n_hcw_deaths = 0, duration = 0))
+  }
+  c(takeoff      = mean(took_off),
+    n_deaths     = mean(reps["n_deaths",     took_off]),
+    n_hcw_deaths = mean(reps["n_hcw_deaths", took_off]),
+    duration     = mean(reps["duration",     took_off]))
+}
+
+N_REPLICATES <- 5   # smoke-test level; bump for Stages 2 and 3
+DESKTOP <- TRUE
+if (DESKTOP) {
+  n_cluster <- 100
+} else {
+  n_cluster <- 10
+}
+
 result <- ABC_sequential(
   method              = "Delmoral",
-  model               = fiber_abc_model,
+  model               = fiber_abc_model_parallel,
   prior               = priors,
-  nb_simul            = 500,
+  nb_simul            = 100,             # smoke test: small particle population
   summary_stat_target = observed_summaries,
   alpha               = 0.5,
-  tolerance_target    = 0.5,
+  tolerance_target    = 1.0,            # loose: just want it to complete
   M                   = 1,
-  p_acc_min           = 0.03,
-  use_seed            = FALSE,
+  # p_acc_min           = 0.1,            # high: allow early stopping
+  use_seed            = TRUE,
   verbose             = TRUE,
-  n_cluster           = 1                 # parallelism needs source() on workers
+  n_cluster           = 100                # EasyABC serial; future does the work
 )
 
 

@@ -13,7 +13,7 @@
 # scenario differences enter only through make_time_varying() curves below.
 # -------------------------------------------------------------------------
 
-SCRIPT_DIR <- "C:/Users/cwhittaker/Documents/Research Projects/fiber/R"
+SCRIPT_DIR <- paste0(getwd(), "/R/")
 
 source_model_functions <- function(function_dir = file.path(SCRIPT_DIR)) {
   files <- c(
