@@ -6,7 +6,7 @@
 #' Counts every infection that was added to `tdf` (every row with a non-NA
 #' `time_infection_absolute`), including leaf cases whose own onward
 #' transmission was not simulated. This matches the convention used by
-#' `key_outputs()`. To check whether the simulation finished, inspect
+#' `summarise_output()`. To check whether the simulation finished, inspect
 #' `all(tdf$offspring_generated)` separately.
 #'
 #' @param tdf     Transmission data frame from `branching_process_main()`.

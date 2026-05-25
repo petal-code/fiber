@@ -10,9 +10,9 @@
 #' that almost always indicates the simulation cap (`check_final_size`) was
 #' hit before the outbreak completed; a warning is emitted with the count.
 #'
-#' Includes the three Nth-death-to-last-outcome durations previously computed
-#' by `key_outputs()`, so a single call returns everything needed by both
-#' descriptive workflows and the likelihood machinery.
+#' Returns descriptive metrics (counts by class, CFRs, setting breakdown,
+#' attack rates) alongside three Nth-death-to-last-outcome durations, so a
+#' single call covers both descriptive workflows and the likelihood machinery.
 #'
 #' @param tdf      Transmission data frame from `branching_process_main()`.
 #' @param sim_info Optional list with `population` and `hcw_total` (the
