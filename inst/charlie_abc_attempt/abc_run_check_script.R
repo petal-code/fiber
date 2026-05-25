@@ -118,7 +118,7 @@ abc_compare_steps <- function(dir = getwd()) {
   for (f in out_files) {
     s <- step_num(f)
     df <- read.table(f, header = FALSE)
-    colnames(df) <- c("weight", "R0", "prop_funeral", "p_hcw_hosp",
+    colnames(df) <- c("weight", "R0", "prop_funeral", "hcw_risk_scalar",
                       "takeoff", "n_deaths", "n_hcw_deaths", "duration")
     w <- df$weight / sum(df$weight)
 
@@ -136,7 +136,7 @@ abc_compare_steps <- function(dir = getwd()) {
       R0_lo          = round(wq(df$R0,           w, 0.025), 3),
       R0_hi          = round(wq(df$R0,           w, 0.975), 3),
       pf_med         = round(wq(df$prop_funeral, w, 0.5), 3),
-      ph_med         = round(wq(df$p_hcw_hosp,   w, 0.5), 3),
+      h_scalar_med   = round(wq(df$p_hcw_hosp,   w, 0.5), 3),
       mean_deaths    = round(sum(w * df$n_deaths)),
       mean_hcw       = round(sum(w * df$n_hcw_deaths)),
       mean_duration  = round(sum(w * df$duration)),

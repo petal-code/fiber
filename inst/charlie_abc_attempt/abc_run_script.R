@@ -118,7 +118,7 @@ base_args$check_final_size <- 30000
 #    mn_offspring_hcw is FIXED (from DEFAULT_SCALAR_INPUTS), not derived.
 # ============================================================================
 ### Note the arbitrary choice of seeding cases, something we need to be wary of
-build_model_args <- function(R0, prop_funeral, prob_hcw_cond_genPop_hospital,
+build_model_args <- function(R0, prop_funeral, hcw_risk_scalar,
                              base = base_args, tv = tv_args_model,
                              seeding_cases = 25,
                              D = D_direct_multiplier,
@@ -130,17 +130,26 @@ build_model_args <- function(R0, prop_funeral, prob_hcw_cond_genPop_hospital,
   args <- c(base, tv)
   args$mn_offspring_genPop           <- mn_genPop
   args$mn_offspring_funeral          <- mn_funeral
-  args$prob_hcw_cond_genPop_hospital <- prob_hcw_cond_genPop_hospital
+
+  # Scale BOTH HCW-hospital probabilities by the same multiplier, capped at 1
+  args$prob_hcw_cond_genPop_hospital <- pmin(
+    DEFAULT_SCALAR_INPUTS$prob_hcw_cond_genPop_hospital * hcw_risk_scalar, 1.0)
+  args$prob_hcw_cond_hcw_hospital    <- pmin(
+    DEFAULT_SCALAR_INPUTS$prob_hcw_cond_hcw_hospital    * hcw_risk_scalar, 1.0)
+
   args$seed                          <- NULL
   args$seeding_cases                 <- seeding_cases
   args
 }
 
 x <- build_model_args(R0 = 1.7, prop_funeral = 0.25,
-                      prob_hcw_cond_genPop_hospital = 0.20,
+                      hcw_risk_scalar = 2.0,
                       base = base_args, tv = tv_args_model)
+
 x$mn_offspring_genPop
 x$mn_offspring_funeral
+x$prob_hcw_cond_genPop_hospital
+x$prob_hcw_cond_hcw_hospital
 
 # ============================================================================
 # 4. SUMMARY FUNCTION
@@ -166,11 +175,11 @@ fiber_abc_model <- function(theta,
                             n_replicates    = N_REPLICATES,
                             include_n_cases = FALSE) {
 
-  R0           <- theta[1]
-  prop_funeral <- theta[2]
-  p_hcw_hosp   <- theta[3]
+  R0              <- theta[1]
+  prop_funeral    <- theta[2]
+  hcw_risk_scalar <- theta[3]
 
-  args <- build_model_args(R0, prop_funeral, p_hcw_hosp)
+  args <- build_model_args(R0, prop_funeral, hcw_risk_scalar)
 
   reps <- vapply(seq_len(n_replicates),
                  function(i) run_one_sim(args), numeric(4))
@@ -215,7 +224,7 @@ observed_summaries <- c(
 priors <- list(
   c("unif", 1.35,  1.55),  # R0
   c("unif", 0.1,  0.4),    # prop_funeral
-  c("unif", 0.20, 0.80)    # prob_hcw_cond_genPop_hospital
+  c("unif", 1, 2.5)    # prob_hcw_cond_genPop_hospital
 )
 
 # ============================================================================
@@ -224,7 +233,7 @@ priors <- list(
 
 prior_predictive_check <- function(n_draws         = 20,
                                    prior_list      = priors,
-                                   param_names     = c("R0", "prop_funeral", "p_hcw_hosp"),
+                                   param_names     = c("R0", "prop_funeral", "hcw_risk_scalar"),
                                    parallel        = TRUE,
                                    n_replicates    = N_REPLICATES,
                                    include_n_cases = TRUE) {       # NEW
@@ -348,7 +357,7 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
 
   R0           <- theta_with_seed[2]
   prop_funeral <- theta_with_seed[3]
-  p_hcw_hosp   <- theta_with_seed[4]
+  hcw_risk_scalar <- theta_with_seed[4]
 
   mn_genPop  <- (1 - prop_funeral) * R0 / D_direct_multiplier
   mn_funeral <-      prop_funeral  * R0 / F_funeral_multiplier
@@ -356,7 +365,8 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
   args <- c(base_args, tv_args_model)
   args$mn_offspring_genPop           <- mn_genPop
   args$mn_offspring_funeral          <- mn_funeral
-  args$prob_hcw_cond_genPop_hospital <- p_hcw_hosp
+  args$prob_hcw_cond_genPop_hospital <- pmin(DEFAULT_SCALAR_INPUTS$prob_hcw_cond_genPop_hospital * hcw_risk_scalar, 1.0)
+  args$prob_hcw_cond_hcw_hospital    <- pmin(DEFAULT_SCALAR_INPUTS$prob_hcw_cond_hcw_hospital    * hcw_risk_scalar, 1.0)
   args$seed                          <- NULL
   args$seeding_cases                 <- 25
 
@@ -406,7 +416,7 @@ print(end_time - start_time)
 # ============================================================================
 
 posterior <- as.data.frame(result$param)
-colnames(posterior) <- c("R0", "prop_funeral", "prob_hcw_hosp")
+colnames(posterior) <- c("R0", "prop_funeral", "hcw_risk_scalar")
 
 print(apply(posterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
 
@@ -434,5 +444,3 @@ saveRDS(result,
 #             file.path(PACKAGE_ROOT, "phase1_outputs", basename(files_to_move)))
 # file.rename(file.path(PACKAGE_ROOT, "fiber_abc_smc_result_Worst_WestAfrica.rds"),
 #             file.path(PACKAGE_ROOT, "fiber_abc_smc_result_Worst_WestAfrica_phase1.rds"))
-
-
