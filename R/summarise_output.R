@@ -126,30 +126,46 @@ summarise_output <- function(
 
   ##--------------------------------------------------------------
   ## 5. OBV PEP summary
+  ##
+  ## The gate counters are nested as sets per individual:
+  ##   pre_eligible >= pre_treated >= pre_adherent
+  ##                ^                ^
+  ##                |                |--- "Policy A: treat all contacts" denominator + treated
+  ##                |
+  ##   post_eligible >= post_treated >= post_adherent >= prevented
+  ##                 ^                 ^
+  ##                 |                 |--- "Policy B: treat only PPE failures" denominator + treated
+  ##                 |--- subset of pre_eligible that also survived PPE/quarantine thinning
+  ##
+  ## tdf-based "breakthroughs" are realised HCW cases in the linelist who were
+  ## eligible/treated/adherent (i.e. OBV did not prevent their infection).
   ##--------------------------------------------------------------
-  obv_counts <- attr(tdf, "obv_pep_counts", exact = TRUE)
-  if (is.null(obv_counts) && !is.null(sim_info$obv_pep_counts)) {
-    obv_counts <- sim_info$obv_pep_counts
+  obv_treated <- attr(tdf, "obv_pep_num_treated", exact = TRUE)
+  if (is.null(obv_treated) && !is.null(sim_info$obv_pep_num_treated)) {
+    obv_treated <- sim_info$obv_pep_num_treated
   }
 
-  n_obv_pep_eligible_exposures <- if (!is.null(obv_counts)) obv_counts$eligible else NA_real_
-  n_obv_pep_received_courses <- if (!is.null(obv_counts)) obv_counts$received else NA_real_
-  n_obv_pep_adherent_courses <- if (!is.null(obv_counts)) obv_counts$adherent else NA_real_
-  n_obv_pep_prevented_infections <- if (!is.null(obv_counts)) obv_counts$prevented else NA_real_
+  n_obv_pep_pre_eligible  <- if (!is.null(obv_treated)) obv_treated$pre_eligible  else NA_real_
+  n_obv_pep_pre_treated   <- if (!is.null(obv_treated)) obv_treated$pre_treated   else NA_real_
+  n_obv_pep_pre_adherent  <- if (!is.null(obv_treated)) obv_treated$pre_adherent  else NA_real_
+  n_obv_pep_post_eligible <- if (!is.null(obv_treated)) obv_treated$post_eligible else NA_real_
+  n_obv_pep_post_treated  <- if (!is.null(obv_treated)) obv_treated$post_treated  else NA_real_
+  n_obv_pep_post_adherent <- if (!is.null(obv_treated)) obv_treated$post_adherent else NA_real_
+  n_obv_pep_prevented     <- if (!is.null(obv_treated)) obv_treated$prevented     else NA_real_
 
   if (!is.null(tdf$obv_pep_eligible)) {
     n_obv_pep_eligible_breakthroughs <- sum(tdf$obv_pep_eligible & subset_vector, na.rm = TRUE)
-    n_obv_pep_received_breakthroughs <- sum(tdf$obv_pep_received & subset_vector, na.rm = TRUE)
+    n_obv_pep_treated_breakthroughs  <- sum(tdf$obv_pep_received & subset_vector, na.rm = TRUE)
     n_obv_pep_adherent_breakthroughs <- sum(tdf$obv_pep_adherent & subset_vector, na.rm = TRUE)
   } else {
     n_obv_pep_eligible_breakthroughs <- NA_real_
-    n_obv_pep_received_breakthroughs <- NA_real_
+    n_obv_pep_treated_breakthroughs  <- NA_real_
     n_obv_pep_adherent_breakthroughs <- NA_real_
   }
 
-  prop_obv_pep_prevented_among_adherent <- if (is.finite(n_obv_pep_adherent_courses) &&
-                                               n_obv_pep_adherent_courses > 0) {
-    n_obv_pep_prevented_infections / n_obv_pep_adherent_courses
+  prop_obv_pep_prevented_among_adherent <- if (is.finite(n_obv_pep_post_adherent) &&
+                                               n_obv_pep_post_adherent > 0) {
+    n_obv_pep_prevented / n_obv_pep_post_adherent
   } else NA_real_
 
   ##--------------------------------------------------------------
@@ -191,13 +207,16 @@ summarise_output <- function(
     hcw_attack_rate          = hcw_attack_rate,
     deaths_per_1000_pop      = deaths_per_1000_pop,
 
-    ## OBV PEP exposure/course counters
-    n_obv_pep_eligible_exposures      = n_obv_pep_eligible_exposures,
-    n_obv_pep_received_courses        = n_obv_pep_received_courses,
-    n_obv_pep_adherent_courses        = n_obv_pep_adherent_courses,
-    n_obv_pep_prevented_infections    = n_obv_pep_prevented_infections,
+    ## OBV PEP num-treated counters (see Step 5 above for set-nesting semantics)
+    n_obv_pep_pre_eligible            = n_obv_pep_pre_eligible,
+    n_obv_pep_pre_treated             = n_obv_pep_pre_treated,
+    n_obv_pep_pre_adherent            = n_obv_pep_pre_adherent,
+    n_obv_pep_post_eligible           = n_obv_pep_post_eligible,
+    n_obv_pep_post_treated            = n_obv_pep_post_treated,
+    n_obv_pep_post_adherent           = n_obv_pep_post_adherent,
+    n_obv_pep_prevented               = n_obv_pep_prevented,
     n_obv_pep_eligible_breakthroughs  = n_obv_pep_eligible_breakthroughs,
-    n_obv_pep_received_breakthroughs  = n_obv_pep_received_breakthroughs,
+    n_obv_pep_treated_breakthroughs   = n_obv_pep_treated_breakthroughs,
     n_obv_pep_adherent_breakthroughs  = n_obv_pep_adherent_breakthroughs,
     prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent
   )

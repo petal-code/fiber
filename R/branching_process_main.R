@@ -63,13 +63,21 @@ branching_process_main <- function(
   ipc_helper = NULL,                        # scalar/function(t): IPC/response maturity proxy
   etu_efficacy_baseline = NULL,             # scalar: baseline ETU/ETC efficacy before IPC maturity adjustment
 
-  ## Obeldesivir PEP for exposed HCWs
-  obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate to eligible HCW exposures
-  obv_pep_coverage_hcw = 0,                  # scalar/function(t): probability eligible HCW exposure receives OBV
+  ## Obeldesivir PEP. The gate is applied around the Swiss-cheese thinning step
+  ## in each offspring function: treatment status (received, adherent, DPC) is
+  ## assigned to all pre-thinning eligible candidates, and efficacy is applied
+  ## only to candidates that also survive PPE/quarantine. See apply_obv_pep_gate().
+  ## Per-individual treatment-status decisions compose multiplicatively with
+  ## the existing PPE source / PPE receiver / hospital quarantine layers in the
+  ## offspring functions; the NB overdispersion of HCW-only offspring counts is
+  ## not preserved exactly under this thinning.
+  obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate
+  obv_pep_coverage_hcw = 0,                  # scalar/function(t): probability eligible candidate receives OBV
   obv_pep_adherence = 1,                     # scalar/function(t): probability received course is effectively adhered to
   obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
-  obv_pep_target_locations = "hospital",     # exposure settings eligible for OBV PEP
+  obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
+  obv_pep_target_locations = "hospital",     # character vector: exposure settings eligible for OBV PEP
 
   ## Funeral occurrence
   p_unsafe_funeral_comm_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, HCW
@@ -148,21 +156,21 @@ branching_process_main <- function(
   if (!is.logical(obv_pep_enabled) || length(obv_pep_enabled) != 1L || is.na(obv_pep_enabled)) {
     stop("`obv_pep_enabled` must be a single logical value.", call. = FALSE)
   }
+  if (!is.character(obv_pep_target_class) || length(obv_pep_target_class) < 1L) {
+    stop("`obv_pep_target_class` must be a non-empty character vector.", call. = FALSE)
+  }
   if (!is.character(obv_pep_target_locations) || length(obv_pep_target_locations) < 1L) {
     stop("`obv_pep_target_locations` must be a non-empty character vector.", call. = FALSE)
   }
-
-  obv_pep_counts <- empty_obv_pep_counts()
-  update_obv_pep_counts <- function(offspring_df) {
-    counts <- attr(offspring_df, "obv_pep_counts", exact = TRUE)
-    if (is.null(counts)) {
-      return(invisible(NULL))
-    }
-    for (nm in names(obv_pep_counts)) {
-      obv_pep_counts[[nm]] <<- obv_pep_counts[[nm]] + counts[[nm]]
-    }
-    invisible(NULL)
+  if (isTRUE(obv_pep_enabled) &&
+      is.numeric(obv_pep_coverage_hcw) && length(obv_pep_coverage_hcw) == 1L &&
+      !is.na(obv_pep_coverage_hcw) && obv_pep_coverage_hcw == 0) {
+    warning("`obv_pep_enabled = TRUE` but `obv_pep_coverage_hcw = 0`; the OBV PEP gate will be a no-op.",
+            call. = FALSE)
   }
+
+  ## OBV PEP per-call accumulator: 7 fields, see empty_obv_pep_num_treated().
+  obv_num_treated <- empty_obv_pep_num_treated()
   ##################################################################
   ### Step 1b: Upfront sanity checks on time-varying parameters
   ###
@@ -187,7 +195,9 @@ branching_process_main <- function(
     ppe_efficacy_hcw              = ppe_efficacy_hcw,
     hospital_quarantine_efficacy  = hospital_quarantine_efficacy,
     prop_etu                      = prop_etu,
-    ipc_helper                    = ipc_helper
+    ipc_helper                    = ipc_helper,
+    obv_pep_coverage_hcw          = obv_pep_coverage_hcw,
+    obv_pep_adherence             = obv_pep_adherence
   )
   sanity_grid <- build_sanity_grid(sanity_params)
 
@@ -198,6 +208,9 @@ branching_process_main <- function(
   ## hospitalisation_delay_factor is strictly positive (a multiplier), not a probability.
   check_positive_on_grid(hospitalisation_delay_factor, sanity_grid,
                          "hospitalisation_delay_factor")
+
+  ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
+  check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")
 
   ## prob_death_hosp must not exceed prob_death_comm (so second_chance_death_prob <= 1).
   ## Currently both are scalars; if they become time-varying in future, this still
@@ -253,8 +266,7 @@ branching_process_main <- function(
     obv_pep_eligible               = rep(FALSE, max_cases),
     obv_pep_received               = rep(FALSE, max_cases),
     obv_pep_adherent               = rep(FALSE, max_cases),
-    obv_pep_dpc                    = rep(NA_real_, max_cases),
-    obv_pep_efficacy               = rep(NA_real_, max_cases),
+    obv_pep_dpc                    = rep(0, max_cases),
     n_offspring                    = integer(max_cases),
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -318,8 +330,7 @@ branching_process_main <- function(
     obv_pep_eligible               = rep(FALSE, seeding_cases),
     obv_pep_received               = rep(FALSE, seeding_cases),
     obv_pep_adherent               = rep(FALSE, seeding_cases),
-    obv_pep_dpc                    = rep(NA_real_, seeding_cases),
-    obv_pep_efficacy               = rep(NA_real_, seeding_cases),
+    obv_pep_dpc                    = rep(0, seeding_cases),
     n_offspring                    = NA_integer_,
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -368,6 +379,7 @@ branching_process_main <- function(
                                                                      obv_pep_adherence = obv_pep_adherence,
                                                                      obv_pep_dpc = obv_pep_dpc,
                                                                      obv_pep_efficacy = obv_pep_efficacy,
+                                                                     obv_pep_target_class = obv_pep_target_class,
                                                                      obv_pep_target_locations = obv_pep_target_locations,
                                                                      ppe_efficacy_hcw = ppe_efficacy_hcw,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
@@ -393,12 +405,21 @@ branching_process_main <- function(
                                                                   obv_pep_adherence = obv_pep_adherence,
                                                                   obv_pep_dpc = obv_pep_dpc,
                                                                   obv_pep_efficacy = obv_pep_efficacy,
+                                                                  obv_pep_target_class = obv_pep_target_class,
                                                                   obv_pep_target_locations = obv_pep_target_locations,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
                                                                   prob_hcw_cond_hcw_hospital = prob_hcw_cond_hcw_hospital)
     }
 
-    update_obv_pep_counts(offspring_community_healthcare_df)
+    ## Accumulate OBV PEP counters from this offspring call (community/healthcare).
+    step <- attr(offspring_community_healthcare_df, "obv_pep_num_treated", exact = TRUE)
+    obv_num_treated$pre_eligible  <- obv_num_treated$pre_eligible  + step$pre_eligible
+    obv_num_treated$pre_treated   <- obv_num_treated$pre_treated   + step$pre_treated
+    obv_num_treated$pre_adherent  <- obv_num_treated$pre_adherent  + step$pre_adherent
+    obv_num_treated$post_eligible <- obv_num_treated$post_eligible + step$post_eligible
+    obv_num_treated$post_treated  <- obv_num_treated$post_treated  + step$post_treated
+    obv_num_treated$post_adherent <- obv_num_treated$post_adherent + step$post_adherent
+    obv_num_treated$prevented     <- obv_num_treated$prevented     + step$prevented
 
     ## Count HCWs generated and subtract from available pool
     n_hcw_community_healthcare <- sum(offspring_community_healthcare_df$class == "HCW")
@@ -418,10 +439,20 @@ branching_process_main <- function(
                                                        obv_pep_adherence = obv_pep_adherence,
                                                        obv_pep_dpc = obv_pep_dpc,
                                                        obv_pep_efficacy = obv_pep_efficacy,
+                                                       obv_pep_target_class = obv_pep_target_class,
                                                        obv_pep_target_locations = obv_pep_target_locations,
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,
                                                        prob_hcw_cond_funeral_genPop = prob_hcw_cond_funeral_genPop)
-    update_obv_pep_counts(offspring_funeral_df)
+
+    ## Accumulate OBV PEP counters from this offspring call (funeral).
+    step <- attr(offspring_funeral_df, "obv_pep_num_treated", exact = TRUE)
+    obv_num_treated$pre_eligible  <- obv_num_treated$pre_eligible  + step$pre_eligible
+    obv_num_treated$pre_treated   <- obv_num_treated$pre_treated   + step$pre_treated
+    obv_num_treated$pre_adherent  <- obv_num_treated$pre_adherent  + step$pre_adherent
+    obv_num_treated$post_eligible <- obv_num_treated$post_eligible + step$post_eligible
+    obv_num_treated$post_treated  <- obv_num_treated$post_treated  + step$post_treated
+    obv_num_treated$post_adherent <- obv_num_treated$post_adherent + step$post_adherent
+    obv_num_treated$prevented     <- obv_num_treated$prevented     + step$prevented
 
     ## Update hcw_available after funeral transmission
     n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
@@ -481,17 +512,17 @@ branching_process_main <- function(
   attr(tdf, "hcw_total") <- hcw_total
   attr(tdf, "hcw_infected") <- hcw_total - hcw_available
   attr(tdf, "hcw_remaining") <- hcw_available
-  attr(tdf, "obv_pep_counts") <- obv_pep_counts
+  attr(tdf, "obv_pep_num_treated") <- obv_num_treated
 
   out <- list(
     tdf = tdf,
     sim_info = list(
-      population     = population,
-      hcw_per_capita = hcw_per_capita,
-      hcw_total      = hcw_total,
-      seed           = seed,
-      obv_pep_enabled = obv_pep_enabled,
-      obv_pep_counts = obv_pep_counts
+      population          = population,
+      hcw_per_capita      = hcw_per_capita,
+      hcw_total           = hcw_total,
+      seed                = seed,
+      obv_pep_enabled     = obv_pep_enabled,
+      obv_pep_num_treated = obv_num_treated
     )
   )
 

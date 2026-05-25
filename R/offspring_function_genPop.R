@@ -40,17 +40,22 @@
 #'   of ETU/ETC care before additional IPC maturity improvements; used when
 #'   \code{hospital_quarantine_efficacy = NULL}.
 #' @param obv_pep_enabled Logical scalar. If TRUE, applies an OBV PEP infection-prevention
-#'   gate to eligible candidate HCW exposures after existing IPC/PPE and ETU/quarantine thinning.
-#' @param obv_pep_coverage_hcw Numeric in \code{[0,1]} or function(t). Probability an eligible
-#'   HCW exposure receives OBV PEP at calendar time \code{t}.
+#'   gate around the Swiss-cheese thinning step. The gate composes multiplicatively with the
+#'   PPE/quarantine layers: a candidate must survive every protective layer (PPE source,
+#'   PPE receiver, hospital quarantine) AND not be prevented by OBV efficacy to appear as a
+#'   realised infection. See \code{apply_obv_pep_gate()} for the two-phase semantics.
+#' @param obv_pep_coverage_hcw Numeric in \code{[0,1]} or function(t). Probability a
+#'   pre-thinning eligible candidate receives OBV at calendar time \code{t}.
 #' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability an OBV recipient
 #'   adheres sufficiently for efficacy to apply.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post challenge/exposure to first
 #'   dose. The simplest working assumption is \code{obv_pep_dpc = 1}.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
 #'   \code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.
+#' @param obv_pep_target_class Character vector of offspring classes eligible for OBV PEP.
+#'   Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure settings eligible for OBV PEP.
-#'   Defaults to \code{"hospital"} for HCW PEP.
+#'   Defaults to \code{"hospital"} for HCW occupational exposures.
 #' @param ppe_efficacy_hcw Numeric in \code{[0,1]} or function(t). Efficacy of PPE worn by HCW
 #'   recipients while treating the hospitalised genPop parent. Applied multiplicatively on top of
 #'   \code{hospital_quarantine_efficacy} for hospital transmissions to HCW recipients only; resolved
@@ -81,6 +86,7 @@ offspring_function_genPop <- function(
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
   obv_pep_efficacy = NULL,
+  obv_pep_target_class = "HCW",
   obv_pep_target_locations = "hospital",
   ## PPE worn by HCW recipients treating the hospitalised genPop parent
   ppe_efficacy_hcw = NULL,                  # scalar/function(t): PPE efficacy for HCW receivers in hospital
@@ -274,31 +280,39 @@ offspring_function_genPop <- function(
     p_keep_infection[hospital_idx] <- (1 - hospital_quarantine_efficacy_t) * (1 - ppe_recv_t)
   }
 
-  # Step 6: Thin
-  keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
-  infection_times <- infection_times[keep_infection]
-  infection_settings <- infection_settings[keep_infection]
-  offspring_class <- offspring_class[keep_infection]
+  # Step 5b: Snapshot the pre-thinning candidate set for the two-phase OBV PEP gate.
+  pre_thinning <- list(
+    infection_location      = infection_settings,
+    offspring_class         = offspring_class,
+    infection_time_absolute = infection_times_absolute
+  )
 
-  # Step 7: Apply OBV PEP gate after class assignment. This targets HCW
-  #         candidate infections, hospital-only by default, and thins them by
-  #         coverage * adherence * efficacy(DPC).
+  # Step 6: Thin (Swiss-cheese; OBV efficacy is applied separately, post-thinning, below)
+  keep_infection <- as.logical(rbinom(n = length(infection_times), size = 1, prob = p_keep_infection))
+
+  # Step 7: OBV PEP gate (two phases internally, see apply_obv_pep_gate). Treatment
+  #         status (received, adherent, dpc) is decided on the pre-thinning set so the
+  #         "treat-all-contacts" denominator is captured; efficacy then thins infections
+  #         only among kept-and-adherent candidates.
   obv_gate <- apply_obv_pep_gate(
-    infection_location = infection_settings,
-    offspring_class = offspring_class,
-    infection_time_absolute = parent_time_infection_absolute + infection_times,
-    obv_pep_enabled = obv_pep_enabled,
-    obv_pep_coverage_hcw = obv_pep_coverage_hcw,
-    obv_pep_adherence = obv_pep_adherence,
-    obv_pep_dpc = obv_pep_dpc,
-    obv_pep_efficacy = obv_pep_efficacy,
+    pre_thinning             = pre_thinning,
+    kept_indices             = which(keep_infection),
+    obv_pep_enabled          = obv_pep_enabled,
+    obv_pep_coverage_hcw     = obv_pep_coverage_hcw,
+    obv_pep_adherence        = obv_pep_adherence,
+    obv_pep_dpc              = obv_pep_dpc,
+    obv_pep_efficacy         = obv_pep_efficacy,
+    obv_pep_target_class     = obv_pep_target_class,
     obv_pep_target_locations = obv_pep_target_locations
   )
 
-  infection_times <- infection_times[obv_gate$keep]
-  infection_settings <- infection_settings[obv_gate$keep]
-  offspring_class <- offspring_class[obv_gate$keep]
-  obv_metadata <- obv_gate$metadata[obv_gate$keep, , drop = FALSE]
+  ## Final realised set = kept AND not prevented by OBV.
+  final_local        <- obv_gate$keep
+  final_idx          <- which(keep_infection)[final_local]
+  infection_times    <- infection_times[final_idx]
+  infection_settings <- infection_settings[final_idx]
+  offspring_class    <- offspring_class[final_idx]
+  obv_metadata       <- obv_gate$metadata[final_local, , drop = FALSE]
 
   # Step 8: Define and output dataframe with the results
   offspring_df <- data.frame(infection_location = infection_settings,
@@ -306,6 +320,6 @@ offspring_function_genPop <- function(
                              class = offspring_class,
                              obv_metadata,
                              stringsAsFactors = FALSE)
-  attr(offspring_df, "obv_pep_counts") <- obv_gate$counts
+  attr(offspring_df, "obv_pep_num_treated") <- obv_gate$num_treated
   return(offspring_df)
 }
