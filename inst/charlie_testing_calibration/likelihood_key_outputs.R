@@ -30,7 +30,6 @@
 #'                       return a list `list(loglik, contributions)`, where
 #'                       `contributions` is a length-6 named numeric vector of
 #'                       per-metric (log-)likelihoods (NA for inactive metrics).
-#' @param subset         Passed through to `key_outputs()`.
 #'
 #' @return Either a scalar (default) or a list with the total plus a per-metric
 #'   contributions vector. Total is `-Inf` (or `0` when `log = FALSE`) if any
@@ -54,8 +53,7 @@ likelihood_key_outputs <- function(
     size_n_deaths_HCW   = NULL,
     sd_duration         = NULL,
     log                 = TRUE,
-    details             = FALSE,
-    subset              = "realised_subset"
+    details             = FALSE
 ) {
 
   ## ---- Duration flags: at most one ---------------------------------------
@@ -127,7 +125,7 @@ likelihood_key_outputs <- function(
   }
 
   ## ---- Compute the model summary ----------------------------------------
-  out <- key_outputs(tdf, subset = subset)
+  out <- key_outputs(tdf)
 
   ## ---- Per-metric log-likelihood contributions --------------------------
   contributions <- c(
