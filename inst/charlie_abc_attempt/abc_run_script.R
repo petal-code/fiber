@@ -83,16 +83,16 @@ cat(sprintf(
   SCENARIO_ID, scenario_label, p_unsafe_funeral_comm_t0, prob_death_comm_fixed
 ))
 
-base_args$check_final_size <- 25000
+base_args$check_final_size <- 30000
 
 # ============================================================================
 # 3. PARAMETER CONVERSION
 #    (R0, prop_funeral, p_hcw) -> override the three relevant fiber inputs.
 #    mn_offspring_hcw is FIXED (from DEFAULT_SCALAR_INPUTS), not derived.
 # ============================================================================
-
+### Note the arbitrary choice of seeding cases, something we need to be wary of
 build_model_args <- function(R0, prop_funeral, prob_hcw_cond_genPop_comm,
-                             base = base_args, tv = tv_args_model) {
+                             base = base_args, tv = tv_args_model, seeding_cases = 15) {
 
   mn_genPop  <- R0 * (1 - prop_funeral)
   mn_funeral <- R0 * prop_funeral / (prob_death_comm_fixed * p_unsafe_funeral_comm_t0)
@@ -103,6 +103,7 @@ build_model_args <- function(R0, prop_funeral, prob_hcw_cond_genPop_comm,
   args$prob_hcw_cond_genPop_comm <- prob_hcw_cond_genPop_comm
   # mn_offspring_hcw left at the fixed default (e.g. 0.20)
   args$seed <- NULL
+  args$seeding_cases <- seeding_cases
   args
 }
 
@@ -205,9 +206,9 @@ observed_summaries <- c(
 # ============================================================================
 
 priors <- list(
-  c("unif", 1.0, 1.75),    # R0
+  c("unif", 1.2, 1.6),    # R0
   c("unif", 0.05, 0.5),    # prop_funeral
-  c("unif", 0.0, 0.02)     # prob_hcw_cond_genPop_comm
+  c("unif", 0.025, 0.05)     # prob_hcw_cond_genPop_comm
 )
 
 
