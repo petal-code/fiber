@@ -136,7 +136,7 @@ abc_compare_steps <- function(dir = getwd()) {
       R0_lo          = round(wq(df$R0,           w, 0.025), 3),
       R0_hi          = round(wq(df$R0,           w, 0.975), 3),
       pf_med         = round(wq(df$prop_funeral, w, 0.5), 3),
-      h_scalar_med   = round(wq(df$p_hcw_hosp,   w, 0.5), 3),
+      h_scalar_med   = round(wq(df$hcw_risk_scalar,   w, 0.5), 3),
       mean_deaths    = round(sum(w * df$n_deaths)),
       mean_hcw       = round(sum(w * df$n_hcw_deaths)),
       mean_duration  = round(sum(w * df$duration)),
@@ -220,7 +220,7 @@ reconstruct_abc_result <- function(dir = getwd(), step = NULL) {
 result <- reconstruct_abc_result(PACKAGE_ROOT)
 
 # Or specify a particular step
-result <- reconstruct_abc_result(PACKAGE_ROOT, step = 4)
+# result <- reconstruct_abc_result(PACKAGE_ROOT, step = 1)
 
 # Now use it the same way as a real ABC_sequential result
 posterior <- as.data.frame(result$param)
@@ -231,14 +231,12 @@ print(apply(posterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
 # All the downstream plotting code from section 10 works unchanged
 par(mfrow = c(1, 3))
 for (j in seq_len(ncol(posterior))) {
-  hist(posterior[, j], breaks = 30, main = colnames(posterior)[j])
+  hist(posterior[, j], breaks = 10, main = colnames(posterior)[j])
   abline(v = quantile(posterior[, j], c(0.025, 0.5, 0.975)),
          lty = c(2, 1, 2), col = "red")
 }
 par(mfrow = c(1, 1))
-pairs(posterior, pch = 16, cex = 0.5, col = adjustcolor("steelblue", alpha = 0.4))
-
-
+# pairs(posterior, pch = 16, cex = 0.5, col = adjustcolor("steelblue", alpha = 0.4))
 
 # === Posterior-predictive check ===
 

@@ -207,7 +207,7 @@ observed_summaries <- c(
 priors <- list(
   c("unif", 1.35,  1.55),  # R0
   c("unif", 0.1,  0.4),    # prop_funeral
-  c("unif", 2, 5)    # prob_hcw_cond_genPop_hospital
+  c("unif", 2, 5)    # risk scalar
 )
 
 # ============================================================================
@@ -387,7 +387,7 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
 
 # N_REPLICATES <- 5   ## NEED TO CHANGE CURRENTLY AS THIS IS DOING NOTHING AND IT'S HARD CODED ABOVE
 if (grepl("PETAL", Sys.info()[["user"]], ignore.case = TRUE)) {
-  n_cluster <- min(120, parallel::detectCores() - 10)
+  n_cluster <- min(110, parallel::detectCores() - 10)
 } else {
   n_cluster <- min(10,  parallel::detectCores() - 4)
 }
@@ -397,7 +397,7 @@ result <- ABC_sequential(
   method              = "Delmoral",
   model               = fiber_abc_model_parallel,
   prior               = priors,
-  nb_simul            = 240,
+  nb_simul            = 220,
   summary_stat_target = observed_summaries,
   alpha               = 0.5,
   tolerance_target    = 0.5,
