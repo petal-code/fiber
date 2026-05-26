@@ -45,6 +45,17 @@
 #                                        the priors imply about the
 #                                        summaries.
 #
+#   --- Output-directory helpers ---
+#     make_abc_output_dir()            : returns a freshly-created, per-run
+#                                        subdirectory so ABC_sequential's
+#                                        output_step* / tolerance_step* /
+#                                        n_simul_tot_step* files don't
+#                                        pollute the repo root.
+#     with_abc_output_dir()            : runs an expression with the working
+#                                        directory temporarily set to that
+#                                        subdirectory; restores cwd even on
+#                                        error.
+#
 #   --- Inspecting / reconstructing in-progress or completed ABC runs ---
 #     abc_progress()                   : prints progress from output_step*
 #                                        / tolerance_step* / n_simul_tot_step*
@@ -231,6 +242,67 @@ load_abc_config <- function() {
          "running ABC_sequential().", call. = FALSE)
   }
   readRDS(path)
+}
+
+
+# -----------------------------------------------------------------------------
+# Output-directory helpers
+# -----------------------------------------------------------------------------
+# ABC_sequential writes its intermediate files (output_step*, tolerance_step*,
+# n_simul_tot_step*) to the current working directory. To stop these polluting
+# the repo, make a per-run subdirectory and chdir into it just for the ABC
+# call. abc_progress() / abc_compare_steps() / reconstruct_abc_result() all
+# already accept a `dir` argument, so they can read back from the same place.
+#
+# make_abc_output_dir() returns the path of a freshly-created subdirectory of
+# the form <base_dir>/<subdir>/<scenario_id>[_YYYYMMDD_HHMMSS][_<label>], and
+# disambiguates with a numeric suffix if the path somehow already exists.
+
+make_abc_output_dir <- function(base_dir,
+                                scenario_id,
+                                label = NULL,
+                                subdir = "abc_outputs",
+                                timestamp = TRUE) {
+  if (missing(base_dir) || is.null(base_dir) || !nzchar(base_dir)) {
+    stop("`base_dir` is required.", call. = FALSE)
+  }
+  if (missing(scenario_id) || is.null(scenario_id) || !nzchar(scenario_id)) {
+    stop("`scenario_id` is required.", call. = FALSE)
+  }
+
+  parts <- scenario_id
+  if (isTRUE(timestamp)) {
+    parts <- paste(parts, format(Sys.time(), "%Y%m%d_%H%M%S"), sep = "_")
+  }
+  if (!is.null(label) && nzchar(label)) {
+    parts <- paste(parts, label, sep = "_")
+  }
+
+  out <- file.path(base_dir, subdir, parts)
+  suffix <- 0L
+  candidate <- out
+  while (dir.exists(candidate)) {
+    suffix <- suffix + 1L
+    candidate <- paste0(out, "_", sprintf("%02d", suffix))
+  }
+  out <- candidate
+
+  dir.create(out, recursive = TRUE, showWarnings = FALSE)
+  out
+}
+
+# with_abc_output_dir() runs an arbitrary expression with the working
+# directory temporarily set to `output_dir`. `expr` is evaluated lazily, so
+# anything written to cwd by ABC_sequential lands in `output_dir`; the
+# original cwd is restored even if the expression errors.
+
+with_abc_output_dir <- function(output_dir, expr) {
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  old <- setwd(output_dir)
+  on.exit(setwd(old), add = TRUE)
+  force(expr)
 }
 
 

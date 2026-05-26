@@ -24,7 +24,7 @@
 #   3. Build base + time-varying args; compute D, F multipliers
 #   4. Observed targets and priors
 #   5. (Optional) Prior predictive check
-#   6. Save worker config (FIBER_ABC_CONFIG)
+#   6. Per-run output directory + worker config (FIBER_ABC_CONFIG)
 #   7. Run ABC_sequential (Del Moral et al. 2012)
 #   8. Save result; inspect posterior
 #   9. (Optional) Reconstruct from disk + monitor progress mid-run
@@ -69,6 +69,16 @@ FIBER_LOAD <- "source"
 MODEL_OVERRIDES <- list(
   check_final_size = 30000
 )
+
+# Where ABC_sequential's intermediate files (output_step*, tolerance_step*,
+# n_simul_tot_step*) and the final result RDS get written. Each call to
+# make_abc_output_dir() in section 6 creates a fresh timestamped
+# subdirectory of <ABC_OUTPUT_BASE>/abc_outputs/, so successive runs don't
+# overwrite each other and the intermediate files stop polluting the repo
+# root. Set ABC_OUTPUT_LABEL to a short string to tag a particular run
+# (e.g. "smoke", "n1000"), or leave NULL for just the timestamp.
+ABC_OUTPUT_BASE  <- PACKAGE_ROOT
+ABC_OUTPUT_LABEL <- NULL
 
 # ABC tuning. These travel into each worker via bootstrap_abc_worker().
 ABC_CONFIG <- list(
@@ -207,13 +217,21 @@ priors <- list(
 
 
 # -----------------------------------------------------------------------------
-# 6. SAVE WORKER CONFIG
+# 6. PER-RUN OUTPUT DIRECTORY + WORKER CONFIG
 # -----------------------------------------------------------------------------
+# Make a fresh per-run subdirectory for everything ABC_sequential writes.
 # ABC_sequential() spawns its own PSOCK cluster, so we cannot rely on
 # clusterExport. Instead, serialise the everything-workers-need-to-know
 # config to disk and advertise it via the FIBER_ABC_CONFIG env var, which
 # PSOCK workers inherit from this R session. On its first call each worker
 # reads the config and self-bootstraps.
+
+ABC_OUTPUT_DIR <- make_abc_output_dir(
+  base_dir    = ABC_OUTPUT_BASE,
+  scenario_id = SCENARIO_ID,
+  label       = ABC_OUTPUT_LABEL
+)
+message("ABC outputs will be written to: ", ABC_OUTPUT_DIR)
 
 save_abc_config(list(
   setup_path      = SETUP_PATH,
@@ -232,27 +250,33 @@ save_abc_config(list(
 # -----------------------------------------------------------------------------
 # 7. RUN ABC_SEQUENTIAL (Del Moral et al. 2012 adaptive SMC)
 # -----------------------------------------------------------------------------
+# Wrap the call so cwd is temporarily ABC_OUTPUT_DIR while step files are
+# written; the workers' cwd is independently controlled inside
+# bootstrap_abc_worker() and is unaffected.
 
 start_time <- Sys.time()
-result <- ABC_sequential(
-  method              = ABC_SETTINGS$method,
-  model               = fiber_abc_model_parallel,
-  prior               = priors,
-  nb_simul            = ABC_SETTINGS$nb_simul,
-  summary_stat_target = observed_summaries,
-  alpha               = ABC_SETTINGS$alpha,
-  tolerance_target    = ABC_SETTINGS$tolerance_target,
-  M                   = ABC_SETTINGS$M,
-  use_seed            = ABC_SETTINGS$use_seed,
-  verbose             = ABC_SETTINGS$verbose,
-  n_cluster           = N_CLUSTER
+result <- with_abc_output_dir(
+  ABC_OUTPUT_DIR,
+  ABC_sequential(
+    method              = ABC_SETTINGS$method,
+    model               = fiber_abc_model_parallel,
+    prior               = priors,
+    nb_simul            = ABC_SETTINGS$nb_simul,
+    summary_stat_target = observed_summaries,
+    alpha               = ABC_SETTINGS$alpha,
+    tolerance_target    = ABC_SETTINGS$tolerance_target,
+    M                   = ABC_SETTINGS$M,
+    use_seed            = ABC_SETTINGS$use_seed,
+    verbose             = ABC_SETTINGS$verbose,
+    n_cluster           = N_CLUSTER
+  )
 )
 end_time <- Sys.time()
 print(end_time - start_time)
 
 saveRDS(
   result,
-  file = file.path(PACKAGE_ROOT, paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
+  file = file.path(ABC_OUTPUT_DIR, paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
 )
 
 
@@ -280,13 +304,15 @@ par(mfrow = c(1, 1))
 # 9. PROGRESS / RECONSTRUCTION FROM DISK
 # -----------------------------------------------------------------------------
 # These functions work mid-run (peek at progress files) or after the fact
-# (rebuild an ABC_sequential()-style result object from output_step*).
+# (rebuild an ABC_sequential()-style result object from output_step*). Point
+# them at ABC_OUTPUT_DIR for the current run, or at any previous run's
+# subdirectory under <ABC_OUTPUT_BASE>/abc_outputs/.
 #
-# abc_progress(PACKAGE_ROOT, tolerance_target = ABC_SETTINGS$tolerance_target)
-# print(abc_compare_steps(PACKAGE_ROOT))
+# abc_progress(ABC_OUTPUT_DIR, tolerance_target = ABC_SETTINGS$tolerance_target)
+# print(abc_compare_steps(ABC_OUTPUT_DIR))
 #
 # # Inspect the final step's particle cloud directly:
-# last_step_file <- tail(list.files(PACKAGE_ROOT, pattern = "^output_step[0-9]+$",
+# last_step_file <- tail(list.files(ABC_OUTPUT_DIR, pattern = "^output_step[0-9]+$",
 #                                   full.names = TRUE), 1L)
 # step_last <- read.table(last_step_file, header = FALSE)
 # colnames(step_last) <- c("weight", "R0", "prop_funeral", "hcw_risk_scalar",
@@ -294,9 +320,9 @@ par(mfrow = c(1, 1))
 # summary(step_last)
 #
 # # Reconstruct an ABC result object from the latest completed step:
-# # result <- reconstruct_abc_result(PACKAGE_ROOT)
+# # result <- reconstruct_abc_result(ABC_OUTPUT_DIR)
 # # Or from a specific step:
-# # result <- reconstruct_abc_result(PACKAGE_ROOT, step = 3)
+# # result <- reconstruct_abc_result(ABC_OUTPUT_DIR, step = 3)
 
 
 # -----------------------------------------------------------------------------
