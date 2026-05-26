@@ -19,14 +19,13 @@
 #
 #   --- ABC model wrappers ---
 #     fiber_abc_model()                : in-process model (single core).
-#     save_abc_config() / load_abc_config()
-#                                      : serialise the everything-workers-
+#     save_abc_config()                : serialises the everything-workers-
 #                                        need-to-know config to disk and
-#                                        advertise it via the
-#                                        FIBER_ABC_CONFIG env var. Single
-#                                        source of truth that propagates
-#                                        cleanly to PSOCK workers spawned
-#                                        by ABC_sequential.
+#                                        advertises it via the
+#                                        FIBER_ABC_CONFIG env var. PSOCK
+#                                        workers spawned by ABC_sequential
+#                                        inherit the env var and read it
+#                                        back in fiber_abc_model_parallel.
 #     bootstrap_abc_worker()           : per-worker setup that builds
 #                                        base_args, tv_args_model, D, F and
 #                                        stashes them in globalenv so that
@@ -209,7 +208,7 @@ fiber_abc_model <- function(theta,
 
 
 # -----------------------------------------------------------------------------
-# Worker config: save / load
+# Worker config
 # -----------------------------------------------------------------------------
 # ABC_sequential() spawns its own PSOCK cluster (via the n_cluster argument)
 # and calls the model function with just a theta_with_seed vector. The per-
@@ -218,8 +217,9 @@ fiber_abc_model <- function(theta,
 #
 # save_abc_config() writes the config to an RDS file in the main process and
 # sets the FIBER_ABC_CONFIG environment variable to the file path. PSOCK
-# workers inherit env vars from the parent R session, so the workers can
-# read the same file via load_abc_config().
+# workers inherit env vars from the parent R session; fiber_abc_model_parallel
+# inlines the readRDS() on first call so the bootstrap can run before any
+# of these helper functions are sourced on the worker.
 
 save_abc_config <- function(config, file = tempfile(fileext = ".rds")) {
   required <- c("setup_path", "functions_path", "r0_path",
@@ -232,16 +232,6 @@ save_abc_config <- function(config, file = tempfile(fileext = ".rds")) {
   saveRDS(config, file = file)
   Sys.setenv(FIBER_ABC_CONFIG = file)
   invisible(file)
-}
-
-load_abc_config <- function() {
-  path <- Sys.getenv("FIBER_ABC_CONFIG")
-  if (path == "" || !file.exists(path)) {
-    stop("FIBER_ABC_CONFIG env var not set or file missing. ",
-         "Call save_abc_config(<config>) in the main process before ",
-         "running ABC_sequential().", call. = FALSE)
-  }
-  readRDS(path)
 }
 
 
@@ -404,10 +394,9 @@ bootstrap_abc_worker <- function(setup_path,
 fiber_abc_model_parallel <- function(theta_with_seed) {
   if (!isTRUE(get0(".fiber_abc_ready", envir = globalenv()))) {
     # The worker's globalenv only contains this function (exported by
-    # ABC_sequential's PSOCK setup). Custom helpers like load_abc_config()
-    # / bootstrap_abc_worker() are NOT yet defined here, so the self-
-    # bootstrap path can only use base R until we have sourced the
-    # helper files.
+    # ABC_sequential's PSOCK setup). Custom helpers like bootstrap_abc_worker()
+    # are NOT yet defined here, so the self-bootstrap path can only use
+    # base R until we have sourced the helper files.
     cfg_path <- Sys.getenv("FIBER_ABC_CONFIG")
     if (cfg_path == "" || !file.exists(cfg_path)) {
       stop("FIBER_ABC_CONFIG env var not set or file missing. ",
