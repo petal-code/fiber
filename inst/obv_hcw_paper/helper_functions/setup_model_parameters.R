@@ -89,13 +89,16 @@ DEFAULT_SCALAR_INPUTS <- list(
   prob_death_hosp = 0.50,
 
   # Conditional class / setting assignment.
-  # The two prob_hcw_cond_*_hospital values are deliberately symmetric and
-  # also serve as the base that hcw_risk_scalar multiplies during ABC
-  # calibration; see hcw_base_prob in abc_calibration_functions.R.
+  # The two prob_hcw_cond_*_hospital values were previously asymmetric
+  # (0.12 and 0.20). Those defaults were not literature-derived and have
+  # been replaced with a symmetric 0.25 because (i) we now fit these via
+  # ABC, with hcw_risk_scalar multiplying the symmetric base (see
+  # hcw_base_prob in abc_calibration_functions.R), and (ii) the previous
+  # asymmetry was arbitrary.
   prob_hcw_cond_genPop_comm = 0.005,
-  prob_hcw_cond_genPop_hospital = 0.25,
+  prob_hcw_cond_genPop_hospital = 0.25,   # was 0.12; symmetric ABC base, see note above
   prob_hcw_cond_hcw_comm = 0.02,
-  prob_hcw_cond_hcw_hospital = 0.25,
+  prob_hcw_cond_hcw_hospital = 0.25,      # was 0.20; symmetric ABC base, see note above
   prob_hospital_cond_hcw_preAdm = 0.50,
 
   # Funeral control / assignment.
