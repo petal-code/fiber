@@ -1,0 +1,356 @@
+# westAfrica_run_abc_calibration.R
+# =============================================================================
+# ABC-SMC calibration of the fiber branching-process model against the
+# 2014-16 West Africa Ebola outbreak (Worst_WestAfrica scenario).
+#
+# Fitted parameters (3):
+#   R0               : baseline reproduction number for a typical genPop
+#                      seeding case (evaluated at t = 0 using the scenario's
+#                      unsafe-funeral and hospital-quarantine settings).
+#   prop_funeral     : share of R0 attributable to funeral transmission at
+#                      t = 0.
+#   hcw_risk_scalar  : multiplier applied (capped at 1) to both
+#                      prob_hcw_cond_*_hospital probabilities.
+#
+# Observed summaries (3, plus a "took off" indicator to handle bimodality):
+#   takeoff      : 1.0 (observed outbreak did take off)
+#   n_deaths     : total deaths
+#   n_hcw_deaths : HCW deaths
+#   duration     : first death -> last outcome, in days
+#
+# Sections:
+#   1. Configuration (paths, scenario, ABC tuning)
+#   2. Sources / fiber load
+#   3. Build base + time-varying args; compute D, F multipliers
+#   4. Observed targets and priors
+#   5. (Optional) Prior predictive check
+#   6. Save worker config (FIBER_ABC_CONFIG)
+#   7. Run ABC_sequential (Del Moral et al. 2012)
+#   8. Save result; inspect posterior
+#   9. (Optional) Reconstruct from disk + monitor progress mid-run
+#  10. Posterior predictive checks
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. CONFIGURATION
+# -----------------------------------------------------------------------------
+# Adjust PACKAGE_ROOT for whichever machine you're on. ANALYSIS_DIR is the
+# folder this script lives in once it's moved to the obv_hcw_paper repo;
+# while it still lives inside fiber, point at inst/obv_hcw_paper.
+
+PACKAGE_ROOT <- switch(
+  Sys.info()[["user"]],
+  "cwhittaker" = "C:/Users/cwhittaker/Documents/Research Projects/fiber",
+  "PETAL_WS_2" = "C:/Users/PETAL_WS_2/Documents/fiber",
+  getwd()
+)
+ANALYSIS_DIR <- file.path(PACKAGE_ROOT, "inst", "obv_hcw_paper")
+FIBER_R_DIR  <- file.path(PACKAGE_ROOT, "R")   # fiber/R/*.R for source_fiber_internals()
+
+SETUP_PATH     <- file.path(ANALYSIS_DIR, "setup_model_parameters.R")
+FUNCTIONS_PATH <- file.path(ANALYSIS_DIR, "abc_calibration_functions.R")
+R0_PATH        <- file.path(ANALYSIS_DIR, "calculate_model_approx_r0.R")
+SCENARIO_CSV   <- file.path(ANALYSIS_DIR, "final_four_scenario_values.csv")
+SCENARIO_ID    <- "Worst_WestAfrica"
+
+# How to load fiber's model functions on the main process and each worker.
+# "library" : library(fiber). Requires fiber's NAMESPACE to export
+#             branching_process_main and the related helpers/offspring/
+#             complete_offspring_info functions.
+# "source"  : source fiber/R/*.R via source_fiber_internals(). Works
+#             regardless of NAMESPACE state.
+FIBER_LOAD <- "source"
+
+# Any scalar-parameter overrides to layer on top of DEFAULT_SCALAR_INPUTS.
+# Pass anything you want to differ from the literature-informed defaults
+# here as a named list; new parameters that get added to the model in the
+# future automatically become overridable without further code changes.
+MODEL_OVERRIDES <- list(
+  check_final_size = 30000
+)
+
+# ABC tuning. These travel into each worker via bootstrap_abc_worker().
+ABC_CONFIG <- list(
+  check_final_size        = 30000,
+  takeoff_death_threshold = 100,   # >= K deaths counts as a take-off
+  n_reps                  = 30,    # replicates per particle (per theta)
+  seeding_cases           = 25,
+  setup_R0_n              = 100000L,
+  setup_R0_seed           = 42L,
+  setup_funeral_share     = 0.5    # only used to choose D and F units
+)
+
+# EasyABC::ABC_sequential settings.
+ABC_SETTINGS <- list(
+  method              = "Delmoral",
+  nb_simul            = 220,
+  alpha               = 0.5,
+  tolerance_target    = 0.5,
+  M                   = 1,
+  use_seed            = TRUE,
+  verbose             = TRUE
+)
+
+# Worker count. Conservative on workstations, aggressive on the PETAL box.
+N_CLUSTER <- if (grepl("PETAL", Sys.info()[["user"]], ignore.case = TRUE)) {
+  min(110, parallel::detectCores() - 10)
+} else {
+  min(10, parallel::detectCores() - 4)
+}
+
+
+# -----------------------------------------------------------------------------
+# 2. LIBRARIES + SOURCES
+# -----------------------------------------------------------------------------
+
+library(EasyABC)
+library(future)
+library(future.apply)
+library(parallel)
+library(progressr)
+handlers("progress")
+
+setwd(PACKAGE_ROOT)
+
+source(SETUP_PATH)
+source(FUNCTIONS_PATH)
+source(R0_PATH)
+
+if (identical(FIBER_LOAD, "library")) {
+  library(fiber)
+} else {
+  source_fiber_internals(FIBER_R_DIR)
+}
+
+check_model_function_version()
+
+
+# -----------------------------------------------------------------------------
+# 3. BUILD BASE + TIME-VARYING ARGS, SOLVE FOR D / F MULTIPLIERS
+# -----------------------------------------------------------------------------
+# Computed ONCE for the main process. Workers will rebuild their own copies
+# from the configuration above in section 6.
+
+scenario_matrix <- read_scenario_matrix(SCENARIO_CSV)
+
+mp <- make_model_parameters(
+  scenario_id     = SCENARIO_ID,
+  scenario_matrix = scenario_matrix,
+  overrides       = MODEL_OVERRIDES
+)
+base_args      <- mp$base_args
+tv_args_model  <- mp$tv_args
+scenario_label <- mp$scenario_label
+
+# Sanity glance at the prob_hosp curve.
+plot(
+  scenario_matrix$relative_day[scenario_matrix$scenario == SCENARIO_ID],
+  scenario_matrix$prob_hosp[scenario_matrix$scenario == SCENARIO_ID],
+  xlab = "Relative day", ylab = "P(hospitalised)",
+  main = paste0(SCENARIO_ID, ": prob_hosp(t)")
+)
+
+setup_solve <- solve_offspring_means_for_R0(
+  R0   = 1.0,
+  args = mp$args,
+  proportion_transmission_from_funerals = ABC_CONFIG$setup_funeral_share,
+  n    = ABC_CONFIG$setup_R0_n,
+  seed = ABC_CONFIG$setup_R0_seed
+)
+D_direct_multiplier  <- setup_solve$D_direct_multiplier
+F_funeral_multiplier <- setup_solve$F_funeral_multiplier
+
+
+# -----------------------------------------------------------------------------
+# 4. OBSERVED TARGETS AND PRIORS
+# -----------------------------------------------------------------------------
+
+observed_summaries <- c(
+  takeoff      = 1.0,
+  n_deaths     = 11325,
+  n_hcw_deaths = 513,
+  duration     = 365    # spatial heterogeneity sustained it; main outbreak ~ a year
+)
+
+priors <- list(
+  c("unif", 1.35, 1.55),   # R0
+  c("unif", 0.10, 0.40),   # prop_funeral
+  c("unif", 2.0,  5.0)     # hcw_risk_scalar
+)
+
+
+# -----------------------------------------------------------------------------
+# 5. PRIOR PREDICTIVE CHECK (optional, slow)
+# -----------------------------------------------------------------------------
+# Run a small prior predictive check before launching the full ABC. This
+# uses the in-process (sequential) model wrapper and is intentionally cheap.
+#
+# To parallelise, set up a future plan first; the function will then use
+# future_lapply when parallel = TRUE.
+#
+# set.seed(1)
+# pp <- prior_predictive_check(
+#   n_draws       = 20,
+#   prior_list    = priors,
+#   base          = base_args,
+#   tv            = tv_args_model,
+#   D             = D_direct_multiplier,
+#   F_fun         = F_funeral_multiplier,
+#   parallel      = FALSE,
+#   n_replicates  = 5,
+#   seeding_cases = ABC_CONFIG$seeding_cases,
+#   takeoff_death_threshold = ABC_CONFIG$takeoff_death_threshold
+# )
+# print(pp)
+# summary(pp)
+
+
+# -----------------------------------------------------------------------------
+# 6. SAVE WORKER CONFIG
+# -----------------------------------------------------------------------------
+# ABC_sequential() spawns its own PSOCK cluster, so we cannot rely on
+# clusterExport. Instead, serialise the everything-workers-need-to-know
+# config to disk and advertise it via the FIBER_ABC_CONFIG env var, which
+# PSOCK workers inherit from this R session. On its first call each worker
+# reads the config and self-bootstraps.
+
+save_abc_config(list(
+  setup_path      = SETUP_PATH,
+  functions_path  = FUNCTIONS_PATH,
+  r0_path         = R0_PATH,
+  scenario_csv    = SCENARIO_CSV,
+  scenario_id     = SCENARIO_ID,
+  package_root    = PACKAGE_ROOT,
+  fiber_r_dir     = FIBER_R_DIR,
+  fiber_load      = FIBER_LOAD,
+  abc_config      = ABC_CONFIG,
+  model_overrides = MODEL_OVERRIDES
+))
+
+
+# -----------------------------------------------------------------------------
+# 7. RUN ABC_SEQUENTIAL (Del Moral et al. 2012 adaptive SMC)
+# -----------------------------------------------------------------------------
+
+start_time <- Sys.time()
+result <- ABC_sequential(
+  method              = ABC_SETTINGS$method,
+  model               = fiber_abc_model_parallel,
+  prior               = priors,
+  nb_simul            = ABC_SETTINGS$nb_simul,
+  summary_stat_target = observed_summaries,
+  alpha               = ABC_SETTINGS$alpha,
+  tolerance_target    = ABC_SETTINGS$tolerance_target,
+  M                   = ABC_SETTINGS$M,
+  use_seed            = ABC_SETTINGS$use_seed,
+  verbose             = ABC_SETTINGS$verbose,
+  n_cluster           = N_CLUSTER
+)
+end_time <- Sys.time()
+print(end_time - start_time)
+
+saveRDS(
+  result,
+  file = file.path(PACKAGE_ROOT, paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
+)
+
+
+# -----------------------------------------------------------------------------
+# 8. POSTERIOR INSPECTION
+# -----------------------------------------------------------------------------
+
+posterior <- as.data.frame(result$param)
+colnames(posterior) <- c("R0", "prop_funeral", "hcw_risk_scalar")
+
+print(apply(posterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
+
+par(mfrow = c(1, 3))
+for (j in seq_len(ncol(posterior))) {
+  hist(posterior[, j], breaks = 15,
+       main = colnames(posterior)[j],
+       xlab = colnames(posterior)[j])
+  abline(v = quantile(posterior[, j], c(0.025, 0.5, 0.975)),
+         lty = c(2, 1, 2), col = "red")
+}
+par(mfrow = c(1, 1))
+
+
+# -----------------------------------------------------------------------------
+# 9. PROGRESS / RECONSTRUCTION FROM DISK
+# -----------------------------------------------------------------------------
+# These functions work mid-run (peek at progress files) or after the fact
+# (rebuild an ABC_sequential()-style result object from output_step*).
+#
+# abc_progress(PACKAGE_ROOT, tolerance_target = ABC_SETTINGS$tolerance_target)
+# print(abc_compare_steps(PACKAGE_ROOT))
+#
+# # Inspect the final step's particle cloud directly:
+# last_step_file <- tail(list.files(PACKAGE_ROOT, pattern = "^output_step[0-9]+$",
+#                                   full.names = TRUE), 1L)
+# step_last <- read.table(last_step_file, header = FALSE)
+# colnames(step_last) <- c("weight", "R0", "prop_funeral", "hcw_risk_scalar",
+#                          "takeoff", "n_deaths", "n_hcw_deaths", "duration")
+# summary(step_last)
+#
+# # Reconstruct an ABC result object from the latest completed step:
+# # result <- reconstruct_abc_result(PACKAGE_ROOT)
+# # Or from a specific step:
+# # result <- reconstruct_abc_result(PACKAGE_ROOT, step = 3)
+
+
+# -----------------------------------------------------------------------------
+# 10. POSTERIOR PREDICTIVE CHECKS
+# -----------------------------------------------------------------------------
+# Resample particles by their weights so the histograms reflect the
+# weighted posterior.
+
+sim_stats <- as.data.frame(result$stats)
+colnames(sim_stats) <- c("takeoff", "n_deaths", "n_hcw_deaths", "duration")
+
+set.seed(1)
+idx <- sample(seq_len(nrow(sim_stats)),
+              size    = 10000,
+              replace = TRUE,
+              prob    = result$weights)
+sim_stats_post <- sim_stats[idx, ]
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+for (s in names(observed_summaries)) {
+  x  <- sim_stats_post[[s]]
+  qs <- quantile(x, probs = c(0.025, 0.5, 0.975))
+
+  hist(x,
+       breaks = 10,
+       main   = paste0("Posterior predictive: ", s),
+       xlab   = s,
+       col    = adjustcolor("steelblue", alpha = 0.6),
+       border = "white")
+  abline(v = qs, col = "darkblue", lty = c(2, 1, 2), lwd = c(1, 2, 1))
+  abline(v = observed_summaries[s], col = "red", lwd = 2.5)
+  legend("topleft",
+         legend = c(paste0("Observed: ", signif(observed_summaries[s], 3)),
+                    paste0("Median: ",   signif(qs[2], 3)),
+                    paste0("95% CI: [",  signif(qs[1], 3), ", ",
+                           signif(qs[3], 3), "]")),
+         col = c("red", "darkblue", NA),
+         lty = c(1, 1, NA),
+         lwd = c(2.5, 2, NA),
+         bty = "n",
+         cex = 0.75)
+}
+par(mfrow = c(1, 1))
+
+# Single-panel summary: simulated vs observed.
+plot(NA, xlim = c(0.5, 4.5), ylim = c(0, 1.5),
+     xaxt = "n", xlab = "", ylab = "Simulated / Observed",
+     main = "Posterior-predictive fit ratio")
+axis(1, at = 1:4, labels = names(observed_summaries))
+abline(h = 1, lty = 2, col = "red")
+for (i in seq_along(observed_summaries)) {
+  x  <- sim_stats_post[[names(observed_summaries)[i]]] /
+        observed_summaries[names(observed_summaries)[i]]
+  qs <- quantile(x, c(0.025, 0.5, 0.975))
+  segments(i, qs[1], i, qs[3], lwd = 2, col = "darkblue")
+  points(i, qs[2], pch = 16, cex = 1.5, col = "darkblue")
+}
