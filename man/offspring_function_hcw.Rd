@@ -17,7 +17,7 @@ offspring_function_hcw(
   ipc_helper = NULL,
   etu_efficacy_baseline = NULL,
   obv_pep_enabled = FALSE,
-  obv_pep_coverage_hcw = 0,
+  obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
   obv_pep_efficacy = NULL,
@@ -74,7 +74,7 @@ PPE/quarantine layers: a candidate must survive every protective layer (PPE sour
 PPE receiver, hospital quarantine) AND not be prevented by OBV efficacy to appear as a
 realised infection. See \code{apply_obv_pep_gate()} for the two-phase semantics.}
 
-\item{obv_pep_coverage_hcw}{Numeric in \code{[0,1]} or function(t). Probability a
+\item{obv_pep_coverage}{Numeric in \code{[0,1]} or function(t). Probability a
 pre-thinning eligible candidate receives OBV at calendar time \code{t}.}
 
 \item{obv_pep_adherence}{Numeric in \code{[0,1]} or function(t). Probability an OBV recipient

@@ -12,7 +12,7 @@ offspring_function_funeral(
   Tg_rate_funeral = NULL,
   safe_funeral_efficacy = NULL,
   obv_pep_enabled = FALSE,
-  obv_pep_coverage_hcw = 0,
+  obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
   obv_pep_efficacy = NULL,
@@ -40,7 +40,7 @@ gate around the safe-funeral thinning step. By default \code{obv_pep_target_loca
 = "hospital"}, so funeral exposures are not eligible; set
 \code{obv_pep_target_locations = c("hospital", "funeral", ...)} to broaden.}
 
-\item{obv_pep_coverage_hcw}{Numeric in \code{[0,1]} or function(t). Probability a
+\item{obv_pep_coverage}{Numeric in \code{[0,1]} or function(t). Probability a
 pre-thinning eligible candidate receives OBV at calendar time \code{t}.}
 
 \item{obv_pep_adherence}{Numeric in \code{[0,1]} or function(t). Probability an OBV recipient

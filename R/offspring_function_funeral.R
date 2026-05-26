@@ -44,7 +44,7 @@
 #'   gate around the safe-funeral thinning step. By default \code{obv_pep_target_locations
 #'   = "hospital"}, so funeral exposures are not eligible; set
 #'   \code{obv_pep_target_locations = c("hospital", "funeral", ...)} to broaden.
-#' @param obv_pep_coverage_hcw Numeric in \code{[0,1]} or function(t). Probability a
+#' @param obv_pep_coverage Numeric in \code{[0,1]} or function(t). Probability a
 #'   pre-thinning eligible candidate receives OBV at calendar time \code{t}.
 #' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability an OBV recipient
 #'   adheres sufficiently for efficacy to apply.
@@ -81,7 +81,7 @@ offspring_function_funeral <- function(
 
   ## Obeldesivir PEP for exposed HCWs
   obv_pep_enabled = FALSE,
-  obv_pep_coverage_hcw = 0,
+  obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
   obv_pep_efficacy = NULL,
@@ -235,7 +235,7 @@ offspring_function_funeral <- function(
     pre_thinning             = pre_thinning,
     kept_indices             = which(keep_infection),
     obv_pep_enabled          = obv_pep_enabled,
-    obv_pep_coverage_hcw     = obv_pep_coverage_hcw,
+    obv_pep_coverage     = obv_pep_coverage,
     obv_pep_adherence        = obv_pep_adherence,
     obv_pep_dpc              = obv_pep_dpc,
     obv_pep_efficacy         = obv_pep_efficacy,

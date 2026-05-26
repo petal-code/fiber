@@ -71,8 +71,16 @@ branching_process_main <- function(
   ## the existing PPE source / PPE receiver / hospital quarantine layers in the
   ## offspring functions; the NB overdispersion of HCW-only offspring counts is
   ## not preserved exactly under this thinning.
+  ##
+  ## Reproducibility caveat: when obv_pep_enabled = TRUE, the gate consumes
+  ## additional rbinom() draws (coverage, adherence, prevention) per offspring
+  ## call. This means OBV-enabled and OBV-disabled simulations with the same
+  ## `seed` will NOT produce identical genPop / hospital / funeral trajectories
+  ## -- they diverge as soon as the first OBV draw fires. For paired
+  ## counterfactual comparisons use many replicates with different seeds and
+  ## compare distributions (see Scenario 2 in the OBV verification script).
   obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate
-  obv_pep_coverage_hcw = 0,                  # scalar/function(t): probability eligible candidate receives OBV
+  obv_pep_coverage = 0,                  # scalar/function(t): probability eligible candidate receives OBV
   obv_pep_adherence = 1,                     # scalar/function(t): probability received course is effectively adhered to
   obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
@@ -163,9 +171,9 @@ branching_process_main <- function(
     stop("`obv_pep_target_locations` must be a non-empty character vector.", call. = FALSE)
   }
   if (isTRUE(obv_pep_enabled) &&
-      is.numeric(obv_pep_coverage_hcw) && length(obv_pep_coverage_hcw) == 1L &&
-      !is.na(obv_pep_coverage_hcw) && obv_pep_coverage_hcw == 0) {
-    warning("`obv_pep_enabled = TRUE` but `obv_pep_coverage_hcw = 0`; the OBV PEP gate will be a no-op.",
+      is.numeric(obv_pep_coverage) && length(obv_pep_coverage) == 1L &&
+      !is.na(obv_pep_coverage) && obv_pep_coverage == 0) {
+    warning("`obv_pep_enabled = TRUE` but `obv_pep_coverage = 0`; the OBV PEP gate will be a no-op.",
             call. = FALSE)
   }
 
@@ -196,7 +204,7 @@ branching_process_main <- function(
     hospital_quarantine_efficacy  = hospital_quarantine_efficacy,
     prop_etu                      = prop_etu,
     ipc_helper                    = ipc_helper,
-    obv_pep_coverage_hcw          = obv_pep_coverage_hcw,
+    obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence
   )
   sanity_grid <- build_sanity_grid(sanity_params)
@@ -266,7 +274,7 @@ branching_process_main <- function(
     obv_pep_eligible               = rep(FALSE, max_cases),
     obv_pep_received               = rep(FALSE, max_cases),
     obv_pep_adherent               = rep(FALSE, max_cases),
-    obv_pep_dpc                    = rep(0, max_cases),
+    obv_pep_dpc                    = rep(NA_real_, max_cases),
     n_offspring                    = integer(max_cases),
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -330,7 +338,7 @@ branching_process_main <- function(
     obv_pep_eligible               = rep(FALSE, seeding_cases),
     obv_pep_received               = rep(FALSE, seeding_cases),
     obv_pep_adherent               = rep(FALSE, seeding_cases),
-    obv_pep_dpc                    = rep(0, seeding_cases),
+    obv_pep_dpc                    = rep(NA_real_, seeding_cases),
     n_offspring                    = NA_integer_,
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -375,7 +383,7 @@ branching_process_main <- function(
                                                                      ipc_helper = ipc_helper,
                                                                      etu_efficacy_baseline = etu_efficacy_baseline,
                                                                      obv_pep_enabled = obv_pep_enabled,
-                                                                     obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                                     obv_pep_coverage = obv_pep_coverage,
                                                                      obv_pep_adherence = obv_pep_adherence,
                                                                      obv_pep_dpc = obv_pep_dpc,
                                                                      obv_pep_efficacy = obv_pep_efficacy,
@@ -401,7 +409,7 @@ branching_process_main <- function(
                                                                   ipc_helper = ipc_helper,
                                                                   etu_efficacy_baseline = etu_efficacy_baseline,
                                                                   obv_pep_enabled = obv_pep_enabled,
-                                                                  obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                                  obv_pep_coverage = obv_pep_coverage,
                                                                   obv_pep_adherence = obv_pep_adherence,
                                                                   obv_pep_dpc = obv_pep_dpc,
                                                                   obv_pep_efficacy = obv_pep_efficacy,
@@ -435,7 +443,7 @@ branching_process_main <- function(
                                                        Tg_rate_funeral = Tg_rate_funeral,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
                                                        obv_pep_enabled = obv_pep_enabled,
-                                                       obv_pep_coverage_hcw = obv_pep_coverage_hcw,
+                                                       obv_pep_coverage = obv_pep_coverage,
                                                        obv_pep_adherence = obv_pep_adherence,
                                                        obv_pep_dpc = obv_pep_dpc,
                                                        obv_pep_efficacy = obv_pep_efficacy,

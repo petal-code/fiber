@@ -272,7 +272,7 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #'   vectors indicating which candidates survived PPE/ETU thinning.
 #' @param obv_pep_enabled Logical scalar. If FALSE, the gate is a no-op and all
 #'   returned counters are zero.
-#' @param obv_pep_coverage_hcw Numeric in \code{[0,1]} or function(t). Probability
+#' @param obv_pep_coverage Numeric in \code{[0,1]} or function(t). Probability
 #'   a pre-thinning eligible candidate receives OBV.
 #' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability a
 #'   recipient adheres sufficiently for efficacy to apply.
@@ -296,7 +296,8 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #'     \item{\code{metadata}}{Data frame with one row per element of
 #'       \code{kept_indices}, with columns \code{obv_pep_eligible},
 #'       \code{obv_pep_received}, \code{obv_pep_adherent}, and \code{obv_pep_dpc}.
-#'       Non-recipients have \code{obv_pep_dpc = 0} and the three booleans FALSE.}
+#'       Non-recipients have \code{obv_pep_dpc = NA_real_} and the three booleans FALSE.
+#'       Filter by \code{obv_pep_received == TRUE} before using \code{obv_pep_dpc}.}
 #'     \item{\code{num_treated}}{Named list of seven integer counters
 #'       (see \code{empty_obv_pep_num_treated()}).}
 #'   }
@@ -304,7 +305,7 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 apply_obv_pep_gate <- function(pre_thinning,
                                kept_indices,
                                obv_pep_enabled = FALSE,
-                               obv_pep_coverage_hcw = 0,
+                               obv_pep_coverage = 0,
                                obv_pep_adherence = 1,
                                obv_pep_dpc = 1,
                                obv_pep_efficacy = NULL,
@@ -330,13 +331,14 @@ apply_obv_pep_gate <- function(pre_thinning,
   }
   n_kept <- length(kept_indices)
 
-  ## Defaults are filled in for non-recipients: booleans FALSE, dpc 0. Together with
-  ## obv_pep_received this is unambiguous: a recipient has obv_pep_received = TRUE.
+  ## Defaults for non-recipients: booleans FALSE, dpc NA. NA disambiguates
+  ## "did not receive OBV" from "received OBV at day 0" (same-day treatment).
+  ## In any analysis, filter by `obv_pep_received == TRUE` before using dpc.
   metadata <- data.frame(
     obv_pep_eligible = rep(FALSE, n_kept),
     obv_pep_received = rep(FALSE, n_kept),
     obv_pep_adherent = rep(FALSE, n_kept),
-    obv_pep_dpc      = rep(0, n_kept),
+    obv_pep_dpc      = rep(NA_real_, n_kept),
     stringsAsFactors = FALSE
   )
   keep <- rep(TRUE, n_kept)
@@ -387,27 +389,37 @@ apply_obv_pep_gate <- function(pre_thinning,
     value
   }
 
-  validate_probability_or_time_varying(obv_pep_coverage_hcw, "obv_pep_coverage_hcw")
+  validate_probability_or_time_varying(obv_pep_coverage, "obv_pep_coverage")
   validate_probability_or_time_varying(obv_pep_adherence, "obv_pep_adherence")
   validate_nonnegative_or_time_varying(obv_pep_dpc, "obv_pep_dpc")
 
   ## --- Phase 1: pre-thinning eligibility, treatment status, DPC. ---
   ## Status vectors span the full pre-thinning set so they can be indexed by
   ## kept_indices in Phase 2 without bookkeeping gymnastics.
+  ##
+  ## Note: Phase 1 RNG draws (coverage, adherence, dpc) run for every
+  ## pre-thinning eligible candidate, even ones whose `kept_indices` is empty
+  ## (e.g. a safe funeral where all candidates were thinned upstream). This is
+  ## by design -- the pre_* counters represent "Policy A doses delivered" and
+  ## include candidates whose infections would have been blocked by PPE or
+  ## safe-burial anyway. The minor compute overhead vs. an "only run draws if
+  ## anything is kept" path is a deliberate trade for cleaner per-policy
+  ## semantics. LOW PRIORITY: could short-circuit if `length(kept_indices) == 0`
+  ## AND callers don't care about pre_* counters in that case.
   pre_eligible   <- pre_thinning$offspring_class %in% obv_pep_target_class &
                     pre_thinning$infection_location %in% obv_pep_target_locations
   num_treated$pre_eligible <- sum(pre_eligible)
 
   status_received <- rep(FALSE, n_pre)
   status_adherent <- rep(FALSE, n_pre)
-  status_dpc      <- rep(0, n_pre)
+  status_dpc      <- rep(NA_real_, n_pre)
 
   if (any(pre_eligible)) {
     pre_eligible_idx <- which(pre_eligible)
     coverage_t <- resolve_probability(
-      obv_pep_coverage_hcw,
+      obv_pep_coverage,
       pre_thinning$infection_time_absolute[pre_eligible_idx],
-      "obv_pep_coverage_hcw"
+      "obv_pep_coverage"
     )
     pre_received <- as.logical(rbinom(n = length(pre_eligible_idx), size = 1, prob = coverage_t))
     status_received[pre_eligible_idx] <- pre_received
