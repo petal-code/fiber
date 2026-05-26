@@ -1,7 +1,7 @@
 # westAfrica_run_abc_calibration.R
 # =============================================================================
-# ABC-SMC calibration of the fiber branching-process model against the
-# 2014-16 West Africa Ebola outbreak (Worst_WestAfrica scenario).
+# Phase 4 ABC-SMC calibration of the fiber branching-process model against
+# the 2014-16 West Africa Ebola outbreak (Worst_WestAfrica scenario).
 #
 # Fitted parameters (3):
 #   R0               : baseline reproduction number for a typical genPop
@@ -9,7 +9,8 @@
 #                      unsafe-funeral and hospital-quarantine settings).
 #   prop_funeral     : share of R0 attributable to funeral transmission at
 #                      t = 0.
-#   hcw_risk_scalar  : multiplier applied (capped at 1) to both
+#   hcw_risk_scalar  : multiplier (capped at 1.0) applied to a symmetric
+#                      hcw_base_prob = 0.25 to produce both
 #                      prob_hcw_cond_*_hospital probabilities.
 #
 # Observed summaries (3, plus a "took off" indicator to handle bimodality):
@@ -18,13 +19,21 @@
 #   n_hcw_deaths : HCW deaths
 #   duration     : first death -> last outcome, in days
 #
+# Phase 4 production targets (Worst_WestAfrica):
+#   nb_simul         = 220
+#   n_reps           = 60
+#   tolerance_target = 0.27  (~0.04 above the N=60 noise floor of ~0.23)
+#   hcw_base_prob    = 0.25  (symmetric base for both HCW-hospital probs)
+#   n_cluster        = 110   (PETAL workstation)
+# Expected ~9 SMC steps, ~46 h wall time on PETAL.
+#
 # Sections:
 #   1. Configuration (paths, scenario, ABC tuning)
-#   2. Sources / fiber load
+#   2. Libraries + sources
 #   3. Build base + time-varying args; compute D, F multipliers
 #   4. Observed targets and priors
 #   5. (Optional) Prior predictive check
-#   6. Save worker config (FIBER_ABC_CONFIG)
+#   6. Per-run output directory + worker config (FIBER_ABC_CONFIG)
 #   7. Run ABC_sequential (Del Moral et al. 2012)
 #   8. Save result; inspect posterior
 #   9. (Optional) Reconstruct from disk + monitor progress mid-run
@@ -35,32 +44,23 @@
 # -----------------------------------------------------------------------------
 # 1. CONFIGURATION
 # -----------------------------------------------------------------------------
-# Adjust PACKAGE_ROOT for whichever machine you're on. ANALYSIS_DIR is the
-# folder this script lives in once it's moved to the obv_hcw_paper repo;
-# while it still lives inside fiber, point at inst/obv_hcw_paper.
+# ANALYSIS_DIR is this script's containing directory (analyses/02_model_fits
+# inside the obv_hcw_paper repo). The script assumes you've setwd() to this
+# directory before sourcing; the machine-specific switch below baked in
+# absolute defaults for the most common workstations.
 
-PACKAGE_ROOT <- switch(
+ANALYSIS_DIR <- switch(
   Sys.info()[["user"]],
-  "cwhittaker" = "C:/Users/cwhittaker/Documents/Research Projects/fiber",
-  "PETAL_WS_2" = "C:/Users/PETAL_WS_2/Documents/fiber",
+  "cwhittaker" = "C:/Users/cwhittaker/Documents/Research Projects/obv_hcw_paper/analyses/02_model_fits",
+  "PETAL_WS_2" = "C:/Users/PETAL_WS_2/Documents/obv_hcw_paper/analyses/02_model_fits",
   getwd()
 )
-ANALYSIS_DIR <- file.path(PACKAGE_ROOT, "inst", "obv_hcw_paper")
-FIBER_R_DIR  <- file.path(PACKAGE_ROOT, "R")   # fiber/R/*.R for source_fiber_internals()
-
-SETUP_PATH     <- file.path(ANALYSIS_DIR, "setup_model_parameters.R")
-FUNCTIONS_PATH <- file.path(ANALYSIS_DIR, "abc_calibration_functions.R")
-R0_PATH        <- file.path(ANALYSIS_DIR, "calculate_model_approx_r0.R")
+HELPER_DIR     <- file.path(ANALYSIS_DIR, "helper_functions")
+SETUP_PATH     <- file.path(HELPER_DIR,   "setup_model_parameters.R")
+FUNCTIONS_PATH <- file.path(HELPER_DIR,   "abc_calibration_functions.R")
+R0_PATH        <- file.path(HELPER_DIR,   "calculate_model_approx_r0.R")
 SCENARIO_CSV   <- file.path(ANALYSIS_DIR, "final_four_scenario_values.csv")
 SCENARIO_ID    <- "Worst_WestAfrica"
-
-# How to load fiber's model functions on the main process and each worker.
-# "library" : library(fiber). Requires fiber's NAMESPACE to export
-#             branching_process_main and the related helpers/offspring/
-#             complete_offspring_info functions.
-# "source"  : source fiber/R/*.R via source_fiber_internals(). Works
-#             regardless of NAMESPACE state.
-FIBER_LOAD <- "source"
 
 # Any scalar-parameter overrides to layer on top of DEFAULT_SCALAR_INPUTS.
 # Pass anything you want to differ from the literature-informed defaults
@@ -70,15 +70,29 @@ MODEL_OVERRIDES <- list(
   check_final_size = 30000
 )
 
+# Where ABC_sequential's intermediate files (output_step*, tolerance_step*,
+# n_simul_tot_step*) and the final result RDS get written. Each call to
+# make_abc_output_dir() in section 6 creates a fresh timestamped
+# subdirectory of <ABC_OUTPUT_BASE>/abc_outputs/ tagged with
+# ABC_OUTPUT_LABEL, so successive phases / runs don't overwrite each other.
+ABC_OUTPUT_BASE  <- ANALYSIS_DIR
+ABC_OUTPUT_LABEL <- "phase4"
+
+# Symmetric base for both prob_hcw_cond_*_hospital probabilities. The fitted
+# hcw_risk_scalar multiplies this for both, capped at 1.0 — see
+# build_abc_model_args() in abc_calibration_functions.R.
+HCW_BASE_PROB <- 0.25
+
 # ABC tuning. These travel into each worker via bootstrap_abc_worker().
 ABC_CONFIG <- list(
   check_final_size        = 30000,
-  takeoff_death_threshold = 100,   # >= K deaths counts as a take-off
-  n_reps                  = 30,    # replicates per particle (per theta)
+  takeoff_death_threshold = 100,         # >= K deaths counts as a take-off
+  n_reps                  = 60,          # replicates per particle (per theta)
   seeding_cases           = 25,
+  hcw_base_prob           = HCW_BASE_PROB,
   setup_R0_n              = 100000L,
   setup_R0_seed           = 42L,
-  setup_funeral_share     = 0.5    # only used to choose D and F units
+  setup_funeral_share     = 0.5          # only used to choose D and F units
 )
 
 # EasyABC::ABC_sequential settings.
@@ -86,13 +100,14 @@ ABC_SETTINGS <- list(
   method              = "Delmoral",
   nb_simul            = 220,
   alpha               = 0.5,
-  tolerance_target    = 0.5,
+  tolerance_target    = 0.27,            # ~0.04 above the N=60 noise floor
   M                   = 1,
   use_seed            = TRUE,
   verbose             = TRUE
 )
 
-# Worker count. Conservative on workstations, aggressive on the PETAL box.
+# Worker count. Aggressive on the PETAL box (Phase 4 target 110), modest
+# on dev workstations.
 N_CLUSTER <- if (grepl("PETAL", Sys.info()[["user"]], ignore.case = TRUE)) {
   min(110, parallel::detectCores() - 10)
 } else {
@@ -109,19 +124,12 @@ library(future)
 library(future.apply)
 library(parallel)
 library(progressr)
+library(fiber)
 handlers("progress")
-
-setwd(PACKAGE_ROOT)
 
 source(SETUP_PATH)
 source(FUNCTIONS_PATH)
 source(R0_PATH)
-
-if (identical(FIBER_LOAD, "library")) {
-  library(fiber)
-} else {
-  source_fiber_internals(FIBER_R_DIR)
-}
 
 check_model_function_version()
 
@@ -141,7 +149,6 @@ mp <- make_model_parameters(
 )
 base_args      <- mp$base_args
 tv_args_model  <- mp$tv_args
-scenario_label <- mp$scenario_label
 
 # Sanity glance at the prob_hosp curve.
 plot(
@@ -173,10 +180,13 @@ observed_summaries <- c(
   duration     = 365    # spatial heterogeneity sustained it; main outbreak ~ a year
 )
 
+# Phase 4 priors. R0 and prop_funeral inherited unchanged from Phase 3;
+# hcw_risk_scalar widened/shifted to (0.50, 4.00) to reflect the new
+# symmetric HCW_BASE_PROB = 0.25 base.
 priors <- list(
   c("unif", 1.35, 1.55),   # R0
   c("unif", 0.10, 0.40),   # prop_funeral
-  c("unif", 2.0,  5.0)     # hcw_risk_scalar
+  c("unif", 0.50, 4.00)    # hcw_risk_scalar
 )
 
 
@@ -200,20 +210,29 @@ priors <- list(
 #   parallel      = FALSE,
 #   n_replicates  = 5,
 #   seeding_cases = ABC_CONFIG$seeding_cases,
-#   takeoff_death_threshold = ABC_CONFIG$takeoff_death_threshold
+#   takeoff_death_threshold = ABC_CONFIG$takeoff_death_threshold,
+#   hcw_base_prob = HCW_BASE_PROB
 # )
 # print(pp)
 # summary(pp)
 
 
 # -----------------------------------------------------------------------------
-# 6. SAVE WORKER CONFIG
+# 6. PER-RUN OUTPUT DIRECTORY + WORKER CONFIG
 # -----------------------------------------------------------------------------
+# Make a fresh per-run subdirectory for everything ABC_sequential writes.
 # ABC_sequential() spawns its own PSOCK cluster, so we cannot rely on
 # clusterExport. Instead, serialise the everything-workers-need-to-know
 # config to disk and advertise it via the FIBER_ABC_CONFIG env var, which
 # PSOCK workers inherit from this R session. On its first call each worker
 # reads the config and self-bootstraps.
+
+ABC_OUTPUT_DIR <- make_abc_output_dir(
+  base_dir    = ABC_OUTPUT_BASE,
+  scenario_id = SCENARIO_ID,
+  label       = ABC_OUTPUT_LABEL
+)
+message("ABC outputs will be written to: ", ABC_OUTPUT_DIR)
 
 save_abc_config(list(
   setup_path      = SETUP_PATH,
@@ -221,9 +240,6 @@ save_abc_config(list(
   r0_path         = R0_PATH,
   scenario_csv    = SCENARIO_CSV,
   scenario_id     = SCENARIO_ID,
-  package_root    = PACKAGE_ROOT,
-  fiber_r_dir     = FIBER_R_DIR,
-  fiber_load      = FIBER_LOAD,
   abc_config      = ABC_CONFIG,
   model_overrides = MODEL_OVERRIDES
 ))
@@ -232,28 +248,35 @@ save_abc_config(list(
 # -----------------------------------------------------------------------------
 # 7. RUN ABC_SEQUENTIAL (Del Moral et al. 2012 adaptive SMC)
 # -----------------------------------------------------------------------------
+# Wrap the call so cwd is temporarily ABC_OUTPUT_DIR while step files are
+# written; the workers' cwd is independent.
 
 start_time <- Sys.time()
-result <- ABC_sequential(
-  method              = ABC_SETTINGS$method,
-  model               = fiber_abc_model_parallel,
-  prior               = priors,
-  nb_simul            = ABC_SETTINGS$nb_simul,
-  summary_stat_target = observed_summaries,
-  alpha               = ABC_SETTINGS$alpha,
-  tolerance_target    = ABC_SETTINGS$tolerance_target,
-  M                   = ABC_SETTINGS$M,
-  use_seed            = ABC_SETTINGS$use_seed,
-  verbose             = ABC_SETTINGS$verbose,
-  n_cluster           = N_CLUSTER
+result <- with_abc_output_dir(
+  ABC_OUTPUT_DIR,
+  ABC_sequential(
+    method              = ABC_SETTINGS$method,
+    model               = fiber_abc_model_parallel,
+    prior               = priors,
+    nb_simul            = ABC_SETTINGS$nb_simul,
+    summary_stat_target = observed_summaries,
+    alpha               = ABC_SETTINGS$alpha,
+    tolerance_target    = ABC_SETTINGS$tolerance_target,
+    M                   = ABC_SETTINGS$M,
+    use_seed            = ABC_SETTINGS$use_seed,
+    verbose             = ABC_SETTINGS$verbose,
+    n_cluster           = N_CLUSTER
+  )
 )
 end_time <- Sys.time()
 print(end_time - start_time)
 
-saveRDS(
-  result,
-  file = file.path(PACKAGE_ROOT, paste0("fiber_abc_smc_result_", SCENARIO_ID, ".rds"))
+result_filename <- paste0(
+  "fiber_abc_smc_result_", SCENARIO_ID,
+  if (nzchar(ABC_OUTPUT_LABEL)) paste0("_", ABC_OUTPUT_LABEL) else "",
+  ".rds"
 )
+saveRDS(result, file = file.path(ABC_OUTPUT_DIR, result_filename))
 
 
 # -----------------------------------------------------------------------------
@@ -280,13 +303,15 @@ par(mfrow = c(1, 1))
 # 9. PROGRESS / RECONSTRUCTION FROM DISK
 # -----------------------------------------------------------------------------
 # These functions work mid-run (peek at progress files) or after the fact
-# (rebuild an ABC_sequential()-style result object from output_step*).
+# (rebuild an ABC_sequential()-style result object from output_step*). Point
+# them at ABC_OUTPUT_DIR for the current run, or at any previous run's
+# subdirectory under <ABC_OUTPUT_BASE>/abc_outputs/.
 #
-# abc_progress(PACKAGE_ROOT, tolerance_target = ABC_SETTINGS$tolerance_target)
-# print(abc_compare_steps(PACKAGE_ROOT))
+# abc_progress(ABC_OUTPUT_DIR, tolerance_target = ABC_SETTINGS$tolerance_target)
+# print(abc_compare_steps(ABC_OUTPUT_DIR))
 #
 # # Inspect the final step's particle cloud directly:
-# last_step_file <- tail(list.files(PACKAGE_ROOT, pattern = "^output_step[0-9]+$",
+# last_step_file <- tail(list.files(ABC_OUTPUT_DIR, pattern = "^output_step[0-9]+$",
 #                                   full.names = TRUE), 1L)
 # step_last <- read.table(last_step_file, header = FALSE)
 # colnames(step_last) <- c("weight", "R0", "prop_funeral", "hcw_risk_scalar",
@@ -294,9 +319,9 @@ par(mfrow = c(1, 1))
 # summary(step_last)
 #
 # # Reconstruct an ABC result object from the latest completed step:
-# # result <- reconstruct_abc_result(PACKAGE_ROOT)
+# # result <- reconstruct_abc_result(ABC_OUTPUT_DIR)
 # # Or from a specific step:
-# # result <- reconstruct_abc_result(PACKAGE_ROOT, step = 3)
+# # result <- reconstruct_abc_result(ABC_OUTPUT_DIR, step = 3)
 
 
 # -----------------------------------------------------------------------------

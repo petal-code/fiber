@@ -19,14 +19,13 @@
 #
 #   --- ABC model wrappers ---
 #     fiber_abc_model()                : in-process model (single core).
-#     save_abc_config() / load_abc_config()
-#                                      : serialise the everything-workers-
+#     save_abc_config()                : serialises the everything-workers-
 #                                        need-to-know config to disk and
-#                                        advertise it via the
-#                                        FIBER_ABC_CONFIG env var. Single
-#                                        source of truth that propagates
-#                                        cleanly to PSOCK workers spawned
-#                                        by ABC_sequential.
+#                                        advertises it via the
+#                                        FIBER_ABC_CONFIG env var. PSOCK
+#                                        workers spawned by ABC_sequential
+#                                        inherit the env var and read it
+#                                        back in fiber_abc_model_parallel.
 #     bootstrap_abc_worker()           : per-worker setup that builds
 #                                        base_args, tv_args_model, D, F and
 #                                        stashes them in globalenv so that
@@ -44,6 +43,17 @@
 #                                        non-parallel model to inspect what
 #                                        the priors imply about the
 #                                        summaries.
+#
+#   --- Output-directory helpers ---
+#     make_abc_output_dir()            : returns a freshly-created, per-run
+#                                        subdirectory so ABC_sequential's
+#                                        output_step* / tolerance_step* /
+#                                        n_simul_tot_step* files don't
+#                                        pollute the repo root.
+#     with_abc_output_dir()            : runs an expression with the working
+#                                        directory temporarily set to that
+#                                        subdirectory; restores cwd even on
+#                                        error.
 #
 #   --- Inspecting / reconstructing in-progress or completed ABC runs ---
 #     abc_progress()                   : prints progress from output_step*
@@ -108,7 +118,11 @@ abc_summarise <- function(out) {
 # fixed scenario inputs at t = 0, so they can be computed once per scenario.
 #
 # hcw_risk_scalar scales BOTH HCW-given-hospital probabilities by the same
-# multiplier (capped at 1).
+# multiplier (capped at 1), starting from a symmetric base `hcw_base_prob`:
+#   prob_hcw_cond_genPop_hospital <- pmin(hcw_base_prob * hcw_risk_scalar, 1)
+#   prob_hcw_cond_hcw_hospital    <- pmin(hcw_base_prob * hcw_risk_scalar, 1)
+# A symmetric base is a more honest reflection of prior uncertainty about
+# the relative magnitudes than the older asymmetric defaults (0.12, 0.20).
 
 build_abc_model_args <- function(R0,
                                  prop_funeral,
@@ -118,19 +132,15 @@ build_abc_model_args <- function(R0,
                                  D,
                                  F_fun,
                                  seeding_cases = 25,
-                                 scalar_inputs = DEFAULT_SCALAR_INPUTS) {
+                                 hcw_base_prob = 0.25) {
   mn_genPop  <- (1 - prop_funeral) * R0 / D
   mn_funeral <-      prop_funeral  * R0 / F_fun
 
   args <- c(base, tv)
   args$mn_offspring_genPop           <- mn_genPop
   args$mn_offspring_funeral          <- mn_funeral
-  args$prob_hcw_cond_genPop_hospital <- pmin(
-    scalar_inputs$prob_hcw_cond_genPop_hospital * hcw_risk_scalar, 1.0
-  )
-  args$prob_hcw_cond_hcw_hospital    <- pmin(
-    scalar_inputs$prob_hcw_cond_hcw_hospital    * hcw_risk_scalar, 1.0
-  )
+  args$prob_hcw_cond_genPop_hospital <- pmin(hcw_base_prob * hcw_risk_scalar, 1.0)
+  args$prob_hcw_cond_hcw_hospital    <- pmin(hcw_base_prob * hcw_risk_scalar, 1.0)
   args$seed          <- NULL
   args$seeding_cases <- seeding_cases
   args
@@ -158,6 +168,7 @@ fiber_abc_model <- function(theta,
                             n_replicates = 30,
                             seeding_cases = 25,
                             takeoff_death_threshold = 100,
+                            hcw_base_prob = 0.25,
                             include_n_cases = FALSE) {
 
   R0              <- theta[1]
@@ -166,7 +177,8 @@ fiber_abc_model <- function(theta,
 
   args <- build_abc_model_args(
     R0 = R0, prop_funeral = prop_funeral, hcw_risk_scalar = hcw_risk_scalar,
-    base = base, tv = tv, D = D, F_fun = F_fun, seeding_cases = seeding_cases
+    base = base, tv = tv, D = D, F_fun = F_fun,
+    seeding_cases = seeding_cases, hcw_base_prob = hcw_base_prob
   )
 
   reps <- vapply(
@@ -198,7 +210,7 @@ fiber_abc_model <- function(theta,
 
 
 # -----------------------------------------------------------------------------
-# Worker config: save / load
+# Worker config
 # -----------------------------------------------------------------------------
 # ABC_sequential() spawns its own PSOCK cluster (via the n_cluster argument)
 # and calls the model function with just a theta_with_seed vector. The per-
@@ -207,12 +219,13 @@ fiber_abc_model <- function(theta,
 #
 # save_abc_config() writes the config to an RDS file in the main process and
 # sets the FIBER_ABC_CONFIG environment variable to the file path. PSOCK
-# workers inherit env vars from the parent R session, so the workers can
-# read the same file via load_abc_config().
+# workers inherit env vars from the parent R session; fiber_abc_model_parallel
+# inlines the readRDS() on first call so the bootstrap can run before any
+# of these helper functions are sourced on the worker.
 
 save_abc_config <- function(config, file = tempfile(fileext = ".rds")) {
   required <- c("setup_path", "functions_path", "r0_path",
-                "scenario_csv", "scenario_id", "package_root")
+                "scenario_csv", "scenario_id")
   missing_keys <- setdiff(required, names(config))
   if (length(missing_keys) > 0L) {
     stop("save_abc_config(): config is missing required key(s): ",
@@ -223,14 +236,65 @@ save_abc_config <- function(config, file = tempfile(fileext = ".rds")) {
   invisible(file)
 }
 
-load_abc_config <- function() {
-  path <- Sys.getenv("FIBER_ABC_CONFIG")
-  if (path == "" || !file.exists(path)) {
-    stop("FIBER_ABC_CONFIG env var not set or file missing. ",
-         "Call save_abc_config(<config>) in the main process before ",
-         "running ABC_sequential().", call. = FALSE)
+
+# -----------------------------------------------------------------------------
+# Output-directory helpers
+# -----------------------------------------------------------------------------
+# ABC_sequential writes its intermediate files (output_step*, tolerance_step*,
+# n_simul_tot_step*) to the current working directory. To stop these polluting
+# the repo, make a per-run subdirectory and chdir into it just for the ABC
+# call. abc_progress() / abc_compare_steps() / reconstruct_abc_result() all
+# already accept a `dir` argument, so they can read back from the same place.
+#
+# make_abc_output_dir() returns the path of a freshly-created subdirectory of
+# the form <base_dir>/<subdir>/<scenario_id>[_YYYYMMDD_HHMMSS][_<label>], and
+# disambiguates with a numeric suffix if the path somehow already exists.
+
+make_abc_output_dir <- function(base_dir,
+                                scenario_id,
+                                label = NULL,
+                                subdir = "abc_outputs",
+                                timestamp = TRUE) {
+  if (missing(base_dir) || is.null(base_dir) || !nzchar(base_dir)) {
+    stop("`base_dir` is required.", call. = FALSE)
   }
-  readRDS(path)
+  if (missing(scenario_id) || is.null(scenario_id) || !nzchar(scenario_id)) {
+    stop("`scenario_id` is required.", call. = FALSE)
+  }
+
+  parts <- scenario_id
+  if (isTRUE(timestamp)) {
+    parts <- paste(parts, format(Sys.time(), "%Y%m%d_%H%M%S"), sep = "_")
+  }
+  if (!is.null(label) && nzchar(label)) {
+    parts <- paste(parts, label, sep = "_")
+  }
+
+  out <- file.path(base_dir, subdir, parts)
+  suffix <- 0L
+  candidate <- out
+  while (dir.exists(candidate)) {
+    suffix <- suffix + 1L
+    candidate <- paste0(out, "_", sprintf("%02d", suffix))
+  }
+  out <- candidate
+
+  dir.create(out, recursive = TRUE, showWarnings = FALSE)
+  out
+}
+
+# with_abc_output_dir() runs an arbitrary expression with the working
+# directory temporarily set to `output_dir`. `expr` is evaluated lazily, so
+# anything written to cwd by ABC_sequential lands in `output_dir`; the
+# original cwd is restored even if the expression errors.
+
+with_abc_output_dir <- function(output_dir, expr) {
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  old <- setwd(output_dir)
+  on.exit(setwd(old), add = TRUE)
+  force(expr)
 }
 
 
@@ -238,44 +302,35 @@ load_abc_config <- function() {
 # Worker bootstrap
 # -----------------------------------------------------------------------------
 # Reads paths + ABC tuning + model overrides, sources the helper files,
-# loads fiber's model functions (via library or by sourcing fiber/R/*.R),
-# precomputes base_args, tv_args_model, D, F, and stashes everything in
-# globalenv. The .fiber_abc_ready sentinel prevents re-running on
-# subsequent calls.
+# loads the fiber package, precomputes base_args, tv_args_model, D, F, and
+# stashes everything in globalenv. The .fiber_abc_ready sentinel prevents
+# re-running on subsequent calls.
 
 bootstrap_abc_worker <- function(setup_path,
                                  functions_path,
                                  r0_path,
                                  scenario_csv,
                                  scenario_id,
-                                 package_root = getwd(),
                                  abc_config = list(),
-                                 model_overrides = list(),
-                                 fiber_load = c("source", "library"),
-                                 fiber_r_dir = file.path(package_root, "R")) {
+                                 model_overrides = list()) {
   default_config <- list(
     check_final_size        = 30000,
     takeoff_death_threshold = 100,
     n_reps                  = 30,
     seeding_cases           = 25,
+    hcw_base_prob           = 0.25,
     setup_R0_n              = 100000L,
     setup_R0_seed           = 42L,
     setup_funeral_share     = 0.5
   )
   abc_config <- utils::modifyList(default_config, abc_config)
-  fiber_load <- match.arg(fiber_load)
 
-  setwd(package_root)
   source(setup_path)
   source(functions_path)
   source(r0_path)
 
-  if (identical(fiber_load, "library")) {
-    if (!"fiber" %in% loadedNamespaces()) {
-      library(fiber)
-    }
-  } else {
-    source_fiber_internals(fiber_r_dir)
+  if (!"fiber" %in% loadedNamespaces()) {
+    library(fiber)
   }
 
   scenario_matrix <- read_scenario_matrix(scenario_csv)
@@ -303,7 +358,6 @@ bootstrap_abc_worker <- function(setup_path,
 
   assign("base_args",           mp$base_args,                       envir = globalenv())
   assign("tv_args_model",       mp$tv_args,                         envir = globalenv())
-  assign("scenario_label",      mp$scenario_label,                  envir = globalenv())
   assign("D_direct_multiplier", setup_solve$D_direct_multiplier,    envir = globalenv())
   assign("F_funeral_multiplier", setup_solve$F_funeral_multiplier,  envir = globalenv())
   assign(".abc_config",         abc_config,                         envir = globalenv())
@@ -332,10 +386,9 @@ bootstrap_abc_worker <- function(setup_path,
 fiber_abc_model_parallel <- function(theta_with_seed) {
   if (!isTRUE(get0(".fiber_abc_ready", envir = globalenv()))) {
     # The worker's globalenv only contains this function (exported by
-    # ABC_sequential's PSOCK setup). Custom helpers like load_abc_config()
-    # / bootstrap_abc_worker() are NOT yet defined here, so the self-
-    # bootstrap path can only use base R until we have sourced the
-    # helper files.
+    # ABC_sequential's PSOCK setup). Custom helpers like bootstrap_abc_worker()
+    # are NOT yet defined here, so the self-bootstrap path can only use
+    # base R until we have sourced the helper files.
     cfg_path <- Sys.getenv("FIBER_ABC_CONFIG")
     if (cfg_path == "" || !file.exists(cfg_path)) {
       stop("FIBER_ABC_CONFIG env var not set or file missing. ",
@@ -350,12 +403,6 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
 
     abc_config_arg <- if (is.null(cfg$abc_config)) list() else cfg$abc_config
     overrides_arg  <- if (is.null(cfg$model_overrides)) list() else cfg$model_overrides
-    load_arg       <- if (is.null(cfg$fiber_load)) "source" else cfg$fiber_load
-    rdir_arg       <- if (is.null(cfg$fiber_r_dir)) {
-      file.path(cfg$package_root, "R")
-    } else {
-      cfg$fiber_r_dir
-    }
 
     bootstrap_abc_worker(
       setup_path      = cfg$setup_path,
@@ -363,11 +410,8 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
       r0_path         = cfg$r0_path,
       scenario_csv    = cfg$scenario_csv,
       scenario_id     = cfg$scenario_id,
-      package_root    = cfg$package_root,
       abc_config      = abc_config_arg,
-      model_overrides = overrides_arg,
-      fiber_load      = load_arg,
-      fiber_r_dir     = rdir_arg
+      model_overrides = overrides_arg
     )
   }
 
@@ -383,7 +427,8 @@ fiber_abc_model_parallel <- function(theta_with_seed) {
     tv              = get("tv_args_model",        envir = globalenv()),
     D               = get("D_direct_multiplier",  envir = globalenv()),
     F_fun           = get("F_funeral_multiplier", envir = globalenv()),
-    seeding_cases   = cfg_run$seeding_cases
+    seeding_cases   = cfg_run$seeding_cases,
+    hcw_base_prob   = cfg_run$hcw_base_prob
   )
 
   reps <- vapply(seq_len(cfg_run$n_reps), function(i) {
@@ -418,6 +463,7 @@ prior_predictive_check <- function(n_draws,
                                    n_replicates = 30,
                                    seeding_cases = 25,
                                    takeoff_death_threshold = 100,
+                                   hcw_base_prob = 0.25,
                                    include_n_cases = TRUE) {
 
   sample_one <- function(spec, n) {
@@ -444,6 +490,7 @@ prior_predictive_check <- function(n_draws,
       n_replicates = n_replicates,
       seeding_cases = seeding_cases,
       takeoff_death_threshold = takeoff_death_threshold,
+      hcw_base_prob = hcw_base_prob,
       include_n_cases = include_n_cases
     )
   }
