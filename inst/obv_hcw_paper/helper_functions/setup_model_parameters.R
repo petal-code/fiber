@@ -32,17 +32,12 @@
 # entries appear in DEFAULT_SCALAR_INPUTS and immediately be overridable
 # with no signature changes downstream.
 #
-# Requires the fiber model functions to be available in the calling
-# environment. Either:
-#   library(fiber)                       # once fiber exports the relevant
-#                                        # functions; or
-#   source_fiber_internals(fiber_r_dir)  # see below, sources fiber/R/*.R
-#                                        # directly without going through the
-#                                        # package's NAMESPACE.
-# Required model functions: branching_process_main(), make_time_varying(),
-# rtrunc_gamma(), prob_hosp_given_symptoms(), prob_death_given_symptoms(),
+# Requires fiber to be loaded:
+#   library(fiber)
+# This provides branching_process_main(), make_time_varying(), rtrunc_gamma(),
+# prob_hosp_given_symptoms(), prob_death_given_symptoms(),
 # offspring_function_*, complete_offspring_info(), summarise_output(),
-# resolve_time_varying(), hcw_loss_function().
+# resolve_time_varying(), and hcw_loss_function().
 # -----------------------------------------------------------------------------
 
 
@@ -94,10 +89,13 @@ DEFAULT_SCALAR_INPUTS <- list(
   prob_death_hosp = 0.50,
 
   # Conditional class / setting assignment.
+  # The two prob_hcw_cond_*_hospital values are deliberately symmetric and
+  # also serve as the base that hcw_risk_scalar multiplies during ABC
+  # calibration; see hcw_base_prob in abc_calibration_functions.R.
   prob_hcw_cond_genPop_comm = 0.005,
-  prob_hcw_cond_genPop_hospital = 0.12,
+  prob_hcw_cond_genPop_hospital = 0.25,
   prob_hcw_cond_hcw_comm = 0.02,
-  prob_hcw_cond_hcw_hospital = 0.20,
+  prob_hcw_cond_hcw_hospital = 0.25,
   prob_hospital_cond_hcw_preAdm = 0.50,
 
   # Funeral control / assignment.
@@ -178,62 +176,16 @@ make_curve <- function(times, values, method = "linear") {
 
 
 # -----------------------------------------------------------------------------
-# Loading the fiber model functions
+# Sanity check: verify the loaded fiber version supports the time-varying
+# hospital_quarantine_efficacy(t) derivation used downstream.
 # -----------------------------------------------------------------------------
-# fiber's NAMESPACE does not currently export branching_process_main() or
-# the related helpers / offspring / complete_offspring_info functions, so
-# library(fiber) alone is not enough to make them callable on the search
-# path. source_fiber_internals() is an escape hatch that sources fiber's
-# R/*.R files directly, recreating the behaviour of the old
-# source_model_functions() helper. Once fiber's exports are updated, the
-# analysis scripts can switch to library(fiber) instead.
-
-source_fiber_internals <- function(fiber_r_dir) {
-  if (missing(fiber_r_dir) || is.null(fiber_r_dir)) {
-    stop("`fiber_r_dir` is required: pass the path to the fiber R/ folder.",
-         call. = FALSE)
-  }
-  if (!dir.exists(fiber_r_dir)) {
-    stop("fiber R/ folder not found at: ", fiber_r_dir, call. = FALSE)
-  }
-
-  files <- c(
-    "helper_functions.R",
-    "resolve_time_varying.R",
-    "make_time_varying.R",
-    "offspring_function_genPop.R",
-    "offspring_function_hcw.R",
-    "offspring_function_funeral.R",
-    "complete_offspring_info.R",
-    "branching_process_main.R",
-    "summarise_output.R",
-    "hcw_loss_function.R"
-  )
-  missing_files <- character(0)
-  for (f in files) {
-    path <- file.path(fiber_r_dir, f)
-    if (!file.exists(path)) {
-      missing_files <- c(missing_files, f)
-      next
-    }
-    source(path)
-  }
-  if (length(missing_files) > 0L) {
-    stop("Could not find required fiber file(s) in ", fiber_r_dir, ": ",
-         paste(missing_files, collapse = ", "), call. = FALSE)
-  }
-  invisible(TRUE)
-}
 
 check_model_function_version <- function() {
   if (!exists("branching_process_main", mode = "function")) {
     stop(
-      "branching_process_main() is not on the search path. Either:\n",
-      "  (a) install / update fiber so that branching_process_main(), the ",
-      "helper / offspring / complete_offspring_info functions are exported, ",
-      "then call library(fiber); or\n",
-      "  (b) call source_fiber_internals(fiber_r_dir) with the path to ",
-      "fiber's R/ folder.",
+      "branching_process_main() is not on the search path. ",
+      "Install fiber (devtools::install_github(\"petal-code/fiber\")) and ",
+      "call library(fiber) before running this script.",
       call. = FALSE
     )
   }
