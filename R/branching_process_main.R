@@ -14,6 +14,22 @@
 ##       we approach parameterising this (maybe we put a check in place??)
 ## Note: prob_hospitalised_hcw and prob_hospitalised_genPop - do they need to be made specific to the location of the infection as well?
 
+#' Run a stochastic branching-process outbreak simulation
+#'
+#' Top-level entry point for fiber's filovirus branching-process model.
+#' Iteratively generates offspring (community, hospital, and funeral
+#' transmission) from active cases until the outbreak ends or the configured
+#' final-size cap is reached. Time-varying scenario inputs (probabilities,
+#' delay factors, IPC / ETU coverage) can be passed as scalars or functions
+#' of time produced by [make_time_varying()].
+#'
+#' Per-argument documentation is pending; see the inline comments in
+#' `R/branching_process_main.R` for the current notes on each parameter.
+#'
+#' @return A list with the simulated transmission tree (`$tdf`) and
+#'   auxiliary outputs (final-size flag, generation index, etc.).
+#'
+#' @export
 branching_process_main <- function(
 
   ## Transmission
