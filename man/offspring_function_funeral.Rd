@@ -11,6 +11,13 @@ offspring_function_funeral(
   Tg_shape_funeral = NULL,
   Tg_rate_funeral = NULL,
   safe_funeral_efficacy = NULL,
+  obv_pep_enabled = FALSE,
+  obv_pep_coverage = 0,
+  obv_pep_adherence = 1,
+  obv_pep_dpc = 1,
+  obv_pep_efficacy = NULL,
+  obv_pep_target_class = "HCW",
+  obv_pep_target_locations = "hospital",
   prob_hcw_cond_funeral_hcw = NULL,
   prob_hcw_cond_funeral_genPop = NULL
 )
@@ -27,6 +34,29 @@ for time from outcome to funeral infections.}
 \item{Tg_rate_funeral}{Positive numeric. Rate of Gamma delay distribution. ## mean GT = shape/rate}
 
 \item{safe_funeral_efficacy}{numeric between 0 and 1. Efficacy in preventing transmission at a safe funeral where 1 = perfect efficacy/no onward transmission; 0 = no efficacy (equivalent to an unsafe funeral). This remains scalar; the time-varying probability that a funeral is safe or unsafe is resolved upstream.}
+
+\item{obv_pep_enabled}{Logical scalar. If TRUE, applies an OBV PEP infection-prevention
+gate around the safe-funeral thinning step. By default \code{obv_pep_target_locations
+= "hospital"}, so funeral exposures are not eligible; set
+\code{obv_pep_target_locations = c("hospital", "funeral", ...)} to broaden.}
+
+\item{obv_pep_coverage}{Numeric in \code{[0,1]} or function(t). Probability a
+pre-thinning eligible candidate receives OBV at calendar time \code{t}.}
+
+\item{obv_pep_adherence}{Numeric in \code{[0,1]} or function(t). Probability an OBV recipient
+adheres sufficiently for efficacy to apply.}
+
+\item{obv_pep_dpc}{Non-negative numeric or function(t). Days post challenge/exposure to first
+dose. The simplest working assumption is \code{obv_pep_dpc = 1}.}
+
+\item{obv_pep_efficacy}{NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
+\code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.}
+
+\item{obv_pep_target_class}{Character vector of offspring classes eligible for OBV PEP.
+Defaults to \code{"HCW"}.}
+
+\item{obv_pep_target_locations}{Character vector of exposure settings eligible for OBV PEP.
+Defaults to \code{"hospital"} for HCW occupational exposures.}
 
 \item{prob_hcw_cond_funeral_hcw}{Numeric between 0 and 1. Probability a funeral infection is an HCW.}
 

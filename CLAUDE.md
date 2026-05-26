@@ -56,10 +56,33 @@ All use Negative Binomial distribution for offspring count and truncated Gamma f
 
 ### Medical Countermeasures (MCMs)
 
-Three intervention mechanisms with efficacy parameters:
+Four intervention mechanisms with efficacy parameters:
 - Hospital quarantine (reduces post-admission transmission)
-- PPE/IPC for HCWs (reduces pre-admission hospital transmission)
+- PPE/IPC for HCWs (reduces pre-admission hospital transmission, plus receiver-PPE for HCW recipients in hospital)
 - Safe burial practices (reduces funeral transmission)
+- **Obeldesivir (OBV) PEP** — post-exposure prophylaxis for exposed candidates in target class/locations (default: HCWs at hospital)
+
+Hospital keep-probability composes the first two multiplicatively (Swiss-cheese):
+`(1 − source_PPE) × (1 − receiver_PPE) × (1 − hospital_quarantine)`.
+OBV PEP is then applied as an additional, independent thinning step on top of that.
+
+### OBV PEP details
+
+Implemented as a two-phase gate (`apply_obv_pep_gate()` in `R/helper_functions.R`):
+
+1. **Pre-thinning phase**: among all candidate exposures in `obv_pep_target_class` × `obv_pep_target_locations`, draw treatment status (received, adherent) and resolve DPC. These populate the `pre_*` counters — interpretable as "Policy A: treat all contacts" doses.
+2. **Post-thinning phase**: for candidates that *also* survived PPE/quarantine thinning, the `post_*` counters are populated as the subset of pre-thinning treated/adherent — interpretable as "Policy B: treat only PPE failures" doses. For kept-and-adherent candidates, `Bernoulli(efficacy(dpc))` decides whether infection is prevented.
+
+A given candidate has *one* treatment status (consistency property): per-individual `post_* ⊆ pre_*` as sets.
+
+Seven gate counters surface in `summarise_output()`:
+- `n_obv_pep_pre_eligible`, `n_obv_pep_pre_treated`, `n_obv_pep_pre_adherent`
+- `n_obv_pep_post_eligible`, `n_obv_pep_post_treated`, `n_obv_pep_post_adherent`
+- `n_obv_pep_prevented`
+
+Plus three tdf-based cohort counters of HCW cases who became cases despite being in the eligible / treated / adherent cohort (`n_obv_pep_eligible_cases`, `n_obv_pep_treated_cases`, `n_obv_pep_breakthroughs`). Only `n_obv_pep_breakthroughs` (received AND adhered AND still infected) is a clinical breakthrough.
+
+Default efficacy curve `obv_pep_efficacy_from_dpc()` is NHP-derived (E0 = 0.82 at dpc=0, decays to 0 at dpc ≥ 10).
 
 ### Infection Locations
 
@@ -67,7 +90,12 @@ Cases are tracked by where infection occurred: `community`, `hospital`, or `fune
 
 ## Testing
 
-Uses testthat (edition 3). Test files go in `tests/testthat/`. Currently no tests are implemented.
+Uses testthat (edition 3). Test files go in `tests/testthat/`. Current suites:
+- `test-make_time_varying.R`
+- `test-time_varying_hospitalisation.R`
+- `test-ppe_thinning.R`
+- `test-conditional_cfr.R`
+- `test-obv_pep.R`
 
 ## Notes
 

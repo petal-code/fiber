@@ -80,3 +80,396 @@ check_positive_on_grid <- function(param, grid, param_name) {
   }
   invisible(NULL)
 }
+
+## Sanity-check a non-negative parameter (scalar or function) by sampling it on
+## `grid` and confirming every resolved value is finite and >= 0. Unlike
+## check_positive_on_grid this allows the boundary value zero (relevant for
+## obv_pep_dpc, where 0 means same-day treatment).
+check_nonneg_on_grid <- function(param, grid, param_name) {
+  if (is.null(param)) return(invisible(NULL))
+  values <- resolve_time_varying(param, grid, param_name)
+  if (any(!is.finite(values)) || any(values < 0)) {
+    bad <- which(!is.finite(values) | values < 0)
+    show <- bad[seq_len(min(3L, length(bad)))]
+    stop(sprintf(
+      "`%s` must resolve to finite, non-negative value(s); failed at t = %s (got %s).",
+      param_name,
+      paste(round(grid[show], 3), collapse = ", "),
+      paste(round(values[show], 4), collapse = ", ")
+    ), call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+
+#' Obeldesivir PEP efficacy as a function of days post challenge/exposure
+#'
+#' This helper implements the current NHP-derived working curve used for the
+#' first OBV/ODV branch. The defaults are the maximum-likelihood estimates from
+#' `ODV_PEP_plot1_only_with_ribbon_GOF.R` using the scaled logistic model with
+#' `dpc_zero = 15` and `k = 1`. For this model branch, efficacy is set to zero
+#' after `max_dpc = 10`, so the fitted line is intentionally cut at 10 DPC.
+#'
+#' @param dpc Numeric vector. Days post challenge/exposure at which OBV is first
+#'   received.
+#' @param E0 Fitted efficacy at DPC 0 on the hazard scale.
+#' @param d50 Fitted logistic midpoint.
+#' @param k Fixed logistic steepness.
+#' @param dpc_zero DPC at which efficacy is forced to zero in the underlying fit.
+#' @param max_dpc Maximum DPC retained in this model branch; later dosing is
+#'   assigned zero efficacy.
+#'
+#' @return Numeric vector of efficacy values between 0 and 1.
+#' @export
+obv_pep_efficacy_from_dpc <- function(dpc,
+                                      E0 = 0.82342697,
+                                      d50 = 5.59722823,
+                                      k = 1,
+                                      dpc_zero = 15,
+                                      max_dpc = 10) {
+  if (!is.numeric(dpc)) {
+    stop("`dpc` must be numeric.", call. = FALSE)
+  }
+  if (length(dpc) == 0L) {
+    return(numeric(0))
+  }
+  if (any(!is.finite(dpc))) {
+    stop("`dpc` must contain only finite values.", call. = FALSE)
+  }
+  if (any(dpc < 0)) {
+    stop("`dpc` must be non-negative.", call. = FALSE)
+  }
+  for (nm in c("E0", "d50", "k", "dpc_zero", "max_dpc")) {
+    val <- get(nm, inherits = FALSE)
+    if (!is.numeric(val) || length(val) != 1L || is.na(val) || !is.finite(val)) {
+      stop(sprintf("`%s` must be a single finite numeric value.", nm), call. = FALSE)
+    }
+  }
+  if (E0 < 0 || E0 > 1) {
+    stop("`E0` must be in [0, 1].", call. = FALSE)
+  }
+  if (dpc_zero <= 0 || max_dpc < 0) {
+    stop("`dpc_zero` must be positive and `max_dpc` must be non-negative.", call. = FALSE)
+  }
+
+  g_logistic <- function(d) 1 / (1 + exp(k * (d - d50)))
+
+  g0 <- g_logistic(0)
+  gz <- g_logistic(dpc_zero)
+  gd <- g_logistic(dpc)
+  denom <- g0 - gz
+  if (!is.finite(denom) || abs(denom) < 1e-10) {
+    stop("Invalid OBV efficacy curve: denominator is effectively zero.", call. = FALSE)
+  }
+
+  eff <- E0 * (gd - gz) / denom
+  eff[dpc >= dpc_zero] <- 0
+  eff[dpc > max_dpc] <- 0
+  pmin(1, pmax(0, eff))
+}
+
+## OBV PEP per-call accumulator. Seven aggregate counters surface both
+## pre-thinning (the "treat-all-contacts" policy denominator) and post-thinning
+## (the "treat-only-PPE-failures" policy denominator) views of treatment, plus
+## the count of infections actually prevented by adherent OBV.
+empty_obv_pep_num_treated <- function() {
+  list(
+    pre_eligible  = 0L,   # # candidates eligible BEFORE PPE/quarantine thinning
+    pre_treated   = 0L,   # # of pre_eligible who received OBV (Bernoulli(coverage))
+    pre_adherent  = 0L,   # # of pre_treated who adhered (Bernoulli(adherence))
+    post_eligible = 0L,   # # pre_eligible candidates that survived thinning (i.e. would-be cases)
+    post_treated  = 0L,   # # pre_treated candidates that survived thinning
+    post_adherent = 0L,   # # pre_adherent candidates that survived thinning
+    prevented     = 0L    # # post_adherent whose infection was prevented by efficacy(dpc)
+  )
+}
+
+empty_offspring_dataframe <- function() {
+  out <- data.frame(
+    infection_location      = character(0),
+    time_infection_relative = numeric(0),
+    class                   = character(0),
+    obv_pep_eligible        = logical(0),
+    obv_pep_received        = logical(0),
+    obv_pep_adherent        = logical(0),
+    obv_pep_dpc             = numeric(0),
+    stringsAsFactors = FALSE
+  )
+  attr(out, "obv_pep_num_treated") <- empty_obv_pep_num_treated()
+  out
+}
+
+resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
+  if (length(dpc) == 0L) {
+    return(numeric(0))
+  }
+
+  if (is.null(obv_pep_efficacy)) {
+    value <- obv_pep_efficacy_from_dpc(dpc)
+  } else if (is.function(obv_pep_efficacy)) {
+    value <- obv_pep_efficacy(dpc)
+  } else {
+    value <- obv_pep_efficacy
+  }
+
+  if (!is.numeric(value)) {
+    stop("`obv_pep_efficacy` must be NULL, a function(dpc), or a numeric value in [0, 1].", call. = FALSE)
+  }
+  if (length(value) == 1L && length(dpc) > 1L) {
+    value <- rep(value, length(dpc))
+  }
+  if (length(value) != length(dpc)) {
+    stop("`obv_pep_efficacy` must return one value per DPC, or a single value to recycle.", call. = FALSE)
+  }
+  if (any(!is.finite(value)) || any(value < 0 | value > 1)) {
+    stop("`obv_pep_efficacy` must resolve to value(s) in [0, 1].", call. = FALSE)
+  }
+
+  as.numeric(value)
+}
+
+#' Apply the obeldesivir PEP gate to candidate offspring (two-phase)
+#'
+#' This is an infection-prevention gate split into two phases that bracket the
+#' offspring functions' Swiss-cheese PPE/ETU thinning step:
+#'
+#' \enumerate{
+#'   \item \emph{Pre-thinning phase.} On the full set of candidate transmissions
+#'     produced by an offspring function (before PPE / hospital quarantine has
+#'     removed any), the gate identifies candidates whose offspring class is in
+#'     \code{obv_pep_target_class} AND whose infection location is in
+#'     \code{obv_pep_target_locations}. For each pre-thinning eligible
+#'     candidate, the gate draws a treatment status (received OBV, adherent to
+#'     the course) and resolves a days-post-challenge value. The pre-thinning
+#'     counters record the size of the "treat-all-contacts" cohort.
+#'   \item \emph{Post-thinning phase.} The gate is told which pre-thinning
+#'     candidates survived PPE/ETU thinning (\code{kept_indices}). Treatment
+#'     status is carried through consistently: a candidate that was assigned
+#'     received/adherent pre-thinning retains that status. The post-thinning
+#'     counters record the size of the "treat-only-PPE-failures" cohort.
+#'     Finally, for each \emph{kept and adherent} candidate, the gate draws
+#'     Bernoulli(\code{efficacy(dpc)}) to decide whether the infection is
+#'     prevented; prevented infections are removed from the output via the
+#'     returned \code{keep} mask.
+#' }
+#'
+#' Each candidate has a single set of treatment-status decisions; the pre- and
+#' post-thinning counts are nested as sets per individual, so doses delivered
+#' under Policy A ("OBV to all contacts") and Policy B ("OBV only when PPE
+#' failed and infection would have occurred") are directly comparable from the
+#' same simulation.
+#'
+#' Per-call multi-exposure caveat: the branching process tracks exposures, not
+#' individuals. A single HCW exposed by two different parents during a
+#' simulation contributes to the treatment counters twice. For exposures
+#' separated by less than a typical OBV course length, this overstates real-world
+#' dose requirements.
+#'
+#' @param pre_thinning Named list of equal-length vectors describing the
+#'   pre-thinning candidate set: \code{infection_location}, \code{offspring_class},
+#'   \code{infection_time_absolute}.
+#' @param kept_indices Integer vector of positions into \code{pre_thinning}'s
+#'   vectors indicating which candidates survived PPE/ETU thinning.
+#' @param obv_pep_enabled Logical scalar. If FALSE, the gate is a no-op and all
+#'   returned counters are zero.
+#' @param obv_pep_coverage Numeric in \code{[0,1]} or function(t). Probability
+#'   a pre-thinning eligible candidate receives OBV.
+#' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability a
+#'   recipient adheres sufficiently for efficacy to apply.
+#' @param obv_pep_dpc Non-negative numeric or function(t). Days post
+#'   challenge / exposure to first dose.
+#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If
+#'   NULL, the NHP-derived \code{obv_pep_efficacy_from_dpc()} helper is used.
+#' @param obv_pep_target_class Character vector of offspring classes eligible
+#'   for OBV PEP. Defaults to \code{"HCW"}.
+#' @param obv_pep_target_locations Character vector of exposure locations
+#'   eligible for OBV PEP. Defaults to \code{"hospital"} for HCW occupational
+#'   exposures; set e.g. to \code{c("hospital", "community", "funeral")} to
+#'   target HCWs in any setting.
+#'
+#' @return A list with three elements:
+#'   \describe{
+#'     \item{\code{keep}}{Logical vector of length \code{length(kept_indices)};
+#'       FALSE entries correspond to kept candidates whose infection was
+#'       prevented by OBV efficacy. Use this mask on the offspring function's
+#'       kept candidates to obtain the final realised offspring set.}
+#'     \item{\code{metadata}}{Data frame with one row per element of
+#'       \code{kept_indices}, with columns \code{obv_pep_eligible},
+#'       \code{obv_pep_received}, \code{obv_pep_adherent}, and \code{obv_pep_dpc}.
+#'       Non-recipients have \code{obv_pep_dpc = NA_real_} and the three booleans FALSE.
+#'       Filter by \code{obv_pep_received == TRUE} before using \code{obv_pep_dpc}.}
+#'     \item{\code{num_treated}}{Named list of seven integer counters
+#'       (see \code{empty_obv_pep_num_treated()}).}
+#'   }
+#' @noRd
+apply_obv_pep_gate <- function(pre_thinning,
+                               kept_indices,
+                               obv_pep_enabled = FALSE,
+                               obv_pep_coverage = 0,
+                               obv_pep_adherence = 1,
+                               obv_pep_dpc = 1,
+                               obv_pep_efficacy = NULL,
+                               obv_pep_target_class = "HCW",
+                               obv_pep_target_locations = "hospital") {
+
+  if (!is.list(pre_thinning) ||
+      !all(c("infection_location", "offspring_class", "infection_time_absolute")
+           %in% names(pre_thinning))) {
+    stop("`pre_thinning` must be a list with `infection_location`, `offspring_class`, and `infection_time_absolute` components.",
+         call. = FALSE)
+  }
+
+  n_pre <- length(pre_thinning$infection_location)
+  if (length(pre_thinning$offspring_class) != n_pre ||
+      length(pre_thinning$infection_time_absolute) != n_pre) {
+    stop("`pre_thinning` components must all have the same length.", call. = FALSE)
+  }
+  if (!is.numeric(kept_indices) ||
+      (length(kept_indices) > 0L && (any(kept_indices < 1L) || any(kept_indices > n_pre)))) {
+    stop("`kept_indices` must be integer indices into the pre-thinning candidate set.",
+         call. = FALSE)
+  }
+  n_kept <- length(kept_indices)
+
+  ## Defaults for non-recipients: booleans FALSE, dpc NA. NA disambiguates
+  ## "did not receive OBV" from "received OBV at day 0" (same-day treatment).
+  ## In any analysis, filter by `obv_pep_received == TRUE` before using dpc.
+  metadata <- data.frame(
+    obv_pep_eligible = rep(FALSE, n_kept),
+    obv_pep_received = rep(FALSE, n_kept),
+    obv_pep_adherent = rep(FALSE, n_kept),
+    obv_pep_dpc      = rep(NA_real_, n_kept),
+    stringsAsFactors = FALSE
+  )
+  keep <- rep(TRUE, n_kept)
+  num_treated <- empty_obv_pep_num_treated()
+
+  if (n_pre == 0L || !isTRUE(obv_pep_enabled)) {
+    return(list(keep = keep, metadata = metadata, num_treated = num_treated))
+  }
+
+  if (!is.character(obv_pep_target_class) || length(obv_pep_target_class) < 1L) {
+    stop("`obv_pep_target_class` must be a non-empty character vector.", call. = FALSE)
+  }
+  if (!is.character(obv_pep_target_locations) || length(obv_pep_target_locations) < 1L) {
+    stop("`obv_pep_target_locations` must be a non-empty character vector.", call. = FALSE)
+  }
+
+  validate_probability_or_time_varying <- function(param, param_name) {
+    if (is.function(param)) return(invisible(NULL))
+    if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0 || param > 1) {
+      stop(sprintf("`%s` must be a function(t) or a single numeric in [0, 1].", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  validate_nonnegative_or_time_varying <- function(param, param_name) {
+    if (is.function(param)) return(invisible(NULL))
+    if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0) {
+      stop(sprintf("`%s` must be a function(t) or a single non-negative numeric.", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  resolve_probability <- function(param, t, param_name) {
+    value <- resolve_time_varying(param = param, t = t, param_name = param_name)
+    if (any(value < 0 | value > 1)) {
+      stop(sprintf("`%s` must resolve to value(s) in [0, 1].", param_name), call. = FALSE)
+    }
+    value
+  }
+
+  resolve_nonnegative <- function(param, t, param_name) {
+    value <- resolve_time_varying(param = param, t = t, param_name = param_name)
+    if (any(!is.finite(value)) || any(value < 0)) {
+      stop(sprintf("`%s` must resolve to finite, non-negative value(s).", param_name), call. = FALSE)
+    }
+    value
+  }
+
+  validate_probability_or_time_varying(obv_pep_coverage, "obv_pep_coverage")
+  validate_probability_or_time_varying(obv_pep_adherence, "obv_pep_adherence")
+  validate_nonnegative_or_time_varying(obv_pep_dpc, "obv_pep_dpc")
+
+  ## --- Phase 1: pre-thinning eligibility, treatment status, DPC. ---
+  ## Status vectors span the full pre-thinning set so they can be indexed by
+  ## kept_indices in Phase 2 without bookkeeping gymnastics.
+  ##
+  ## Note: Phase 1 RNG draws (coverage, adherence, dpc) run for every
+  ## pre-thinning eligible candidate, even ones whose `kept_indices` is empty
+  ## (e.g. a safe funeral where all candidates were thinned upstream). This is
+  ## by design -- the pre_* counters represent "Policy A doses delivered" and
+  ## include candidates whose infections would have been blocked by PPE or
+  ## safe-burial anyway. The minor compute overhead vs. an "only run draws if
+  ## anything is kept" path is a deliberate trade for cleaner per-policy
+  ## semantics. LOW PRIORITY: could short-circuit if `length(kept_indices) == 0`
+  ## AND callers don't care about pre_* counters in that case.
+  pre_eligible   <- pre_thinning$offspring_class %in% obv_pep_target_class &
+                    pre_thinning$infection_location %in% obv_pep_target_locations
+  num_treated$pre_eligible <- sum(pre_eligible)
+
+  status_received <- rep(FALSE, n_pre)
+  status_adherent <- rep(FALSE, n_pre)
+  status_dpc      <- rep(NA_real_, n_pre)
+
+  if (any(pre_eligible)) {
+    pre_eligible_idx <- which(pre_eligible)
+    coverage_t <- resolve_probability(
+      obv_pep_coverage,
+      pre_thinning$infection_time_absolute[pre_eligible_idx],
+      "obv_pep_coverage"
+    )
+    pre_received <- as.logical(rbinom(n = length(pre_eligible_idx), size = 1, prob = coverage_t))
+    status_received[pre_eligible_idx] <- pre_received
+    num_treated$pre_treated <- sum(pre_received)
+
+    pre_received_idx <- pre_eligible_idx[pre_received]
+    if (length(pre_received_idx) > 0L) {
+      adherence_t <- resolve_probability(
+        obv_pep_adherence,
+        pre_thinning$infection_time_absolute[pre_received_idx],
+        "obv_pep_adherence"
+      )
+      pre_adherent <- as.logical(rbinom(n = length(pre_received_idx), size = 1, prob = adherence_t))
+      status_adherent[pre_received_idx] <- pre_adherent
+      num_treated$pre_adherent <- sum(pre_adherent)
+
+      status_dpc[pre_received_idx] <- resolve_nonnegative(
+        obv_pep_dpc,
+        pre_thinning$infection_time_absolute[pre_received_idx],
+        "obv_pep_dpc"
+      )
+    }
+  }
+
+  if (n_kept == 0L) {
+    return(list(keep = keep, metadata = metadata, num_treated = num_treated))
+  }
+
+  ## --- Phase 2: intersect with kept; apply efficacy to (kept & adherent). ---
+  kept_eligible <- pre_eligible[kept_indices]
+  kept_received <- status_received[kept_indices]
+  kept_adherent <- status_adherent[kept_indices]
+  kept_dpc      <- status_dpc[kept_indices]
+
+  num_treated$post_eligible <- sum(kept_eligible)
+  num_treated$post_treated  <- sum(kept_received)
+  num_treated$post_adherent <- sum(kept_adherent)
+
+  if (any(kept_adherent)) {
+    adh_local_idx <- which(kept_adherent)
+    efficacy_vals <- resolve_obv_efficacy(obv_pep_efficacy, kept_dpc[adh_local_idx])
+    prevented <- as.logical(rbinom(n = length(adh_local_idx), size = 1, prob = efficacy_vals))
+    keep[adh_local_idx[prevented]] <- FALSE
+    num_treated$prevented <- sum(prevented)
+  }
+
+  metadata$obv_pep_eligible <- kept_eligible
+  metadata$obv_pep_received <- kept_received
+  metadata$obv_pep_adherent <- kept_adherent
+  metadata$obv_pep_dpc      <- kept_dpc
+
+  list(keep = keep, metadata = metadata, num_treated = num_treated)
+}

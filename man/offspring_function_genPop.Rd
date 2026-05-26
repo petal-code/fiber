@@ -14,6 +14,13 @@ offspring_function_genPop(
   prop_etu = NULL,
   ipc_helper = NULL,
   etu_efficacy_baseline = NULL,
+  obv_pep_enabled = FALSE,
+  obv_pep_coverage = 0,
+  obv_pep_adherence = 1,
+  obv_pep_dpc = 1,
+  obv_pep_efficacy = NULL,
+  obv_pep_target_class = "HCW",
+  obv_pep_target_locations = "hospital",
   ppe_efficacy_hcw = NULL,
   prob_hcw_cond_genPop_comm = NULL,
   prob_hcw_cond_genPop_hospital = NULL
@@ -49,6 +56,30 @@ proxy at time \code{t}; used when \code{hospital_quarantine_efficacy = NULL}.}
 \item{etu_efficacy_baseline}{Numeric between 0 and 1. Baseline transmission-blocking efficacy
 of ETU/ETC care before additional IPC maturity improvements; used when
 \code{hospital_quarantine_efficacy = NULL}.}
+
+\item{obv_pep_enabled}{Logical scalar. If TRUE, applies an OBV PEP infection-prevention
+gate around the Swiss-cheese thinning step. The gate composes multiplicatively with the
+PPE/quarantine layers: a candidate must survive every protective layer (PPE source,
+PPE receiver, hospital quarantine) AND not be prevented by OBV efficacy to appear as a
+realised infection. See \code{apply_obv_pep_gate()} for the two-phase semantics.}
+
+\item{obv_pep_coverage}{Numeric in \code{[0,1]} or function(t). Probability a
+pre-thinning eligible candidate receives OBV at calendar time \code{t}.}
+
+\item{obv_pep_adherence}{Numeric in \code{[0,1]} or function(t). Probability an OBV recipient
+adheres sufficiently for efficacy to apply.}
+
+\item{obv_pep_dpc}{Non-negative numeric or function(t). Days post challenge/exposure to first
+dose. The simplest working assumption is \code{obv_pep_dpc = 1}.}
+
+\item{obv_pep_efficacy}{NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
+\code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.}
+
+\item{obv_pep_target_class}{Character vector of offspring classes eligible for OBV PEP.
+Defaults to \code{"HCW"}.}
+
+\item{obv_pep_target_locations}{Character vector of exposure settings eligible for OBV PEP.
+Defaults to \code{"hospital"} for HCW occupational exposures.}
 
 \item{ppe_efficacy_hcw}{Numeric in \code{[0,1]} or function(t). Efficacy of PPE worn by HCW
 recipients while treating the hospitalised genPop parent. Applied multiplicatively on top of
