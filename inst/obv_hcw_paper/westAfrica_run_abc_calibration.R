@@ -151,7 +151,6 @@ mp <- make_model_parameters(
 )
 base_args      <- mp$base_args
 tv_args_model  <- mp$tv_args
-scenario_label <- mp$scenario_label
 
 # Sanity glance at the prob_hosp curve.
 plot(

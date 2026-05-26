@@ -8,14 +8,14 @@
 ## hospital_quarantine_efficacy) are read at t = 0.
 ##
 ## Usage:
-##     source("00_common_time_varying_scenario_setup.R")
-##     base_args <- make_base_args()
-##     tv        <- build_time_varying_args(scenario_id = "scenario_1")
-##     tv$scenario_label  <- NULL
-##     tv$scenario_matrix <- NULL
-##     args <- c(base_args, tv)
+##     source("setup_model_parameters.R")
+##     scenario_matrix <- read_scenario_matrix("final_four_scenario_values.csv")
+##     mp <- make_model_parameters(
+##       scenario_id     = "Worst_WestAfrica",
+##       scenario_matrix = scenario_matrix
+##     )
 ##
-##     R0_single_type_from_args(args, n = 50000, seed = 1)
+##     R0_single_type_from_args(mp$args, n = 50000, seed = 1)
 ## =============================================================================
 
 
@@ -313,50 +313,26 @@ solve_offspring_means_for_R0 <- function(R0,
 ## =============================================================================
 ## Example usage
 ## =============================================================================
-# args <- c(base_args, tv_args_model)
+# source("setup_model_parameters.R")
+# scenario_matrix <- read_scenario_matrix("final_four_scenario_values.csv")
+# mp <- make_model_parameters(
+#   scenario_id     = "Worst_WestAfrica",
+#   scenario_matrix = scenario_matrix
+# )
 #
 # sol <- solve_offspring_means_for_R0(
-#   R0    = 1.5,
-#   args  = args,
+#   R0                                    = 1.5,
+#   args                                  = mp$args,
 #   proportion_transmission_from_funerals = 0.45,
-#   n     = 50000,
-#   seed  = 273
+#   n                                     = 50000,
+#   seed                                  = 273
 # )
 # sol$mn_offspring_genPop_required
 # sol$mn_offspring_funeral_required
 #
 # ## Sanity check: plug back in and recompute R0
-# args2 <- args
+# args2 <- mp$args
 # args2$mn_offspring_genPop  <- sol$mn_offspring_genPop_required
 # args2$mn_offspring_funeral <- sol$mn_offspring_funeral_required
 # R0_single_type_from_args(args2, n = 50000, seed = 273)$R0      # should be ~1.5
-
-# # ============================================================================
-# # 1. SOURCE THE COMMON SETUP
-# #    Brings in DEFAULT_SCALAR_INPUTS, make_base_args(),
-# #    build_time_varying_args(), make_gamma_sampler(), and all model functions.
-# # ============================================================================
-# source("inst/charlie_abc_attempt/00_common_time_varying_scenario_setup.R")
-#
-# # ============================================================================
-# # 2. CHOOSE SCENARIO + BUILD FIXED ARGS
-# #    These do not depend on theta and are computed once.
-# # ============================================================================
-#
-# SCENARIO_ID  <- "Worst_WestAfrica"
-# SCENARIO_CSV <- "C:/Users/cwhittaker/Documents/Research Projects/fiber/inst/charlie_abc_attempt/final_four_scenario_values.csv"
-# scenario_matrix <- read_scenario_matrix(SCENARIO_CSV)
-#
-# base_args <- make_base_args(scalar_inputs = DEFAULT_SCALAR_INPUTS)
-#
-# tv_args <- build_time_varying_args(
-#   scenario_id           = SCENARIO_ID,
-#   matrix                = scenario_matrix,
-#   etu_efficacy_baseline = DEFAULT_SCALAR_INPUTS$etu_efficacy_baseline
-# )
-#
-# scenario_label <- tv_args$scenario_label
-# tv_args_model  <- tv_args[setdiff(names(tv_args), c("scenario_label", "scenario_matrix"))]
-#
-# R0_single_type_from_args(args = c(base_args, tv_args_model), n = 50000, seed = 273)$R0
 

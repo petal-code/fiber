@@ -365,7 +365,6 @@ bootstrap_abc_worker <- function(setup_path,
 
   assign("base_args",           mp$base_args,                       envir = globalenv())
   assign("tv_args_model",       mp$tv_args,                         envir = globalenv())
-  assign("scenario_label",      mp$scenario_label,                  envir = globalenv())
   assign("D_direct_multiplier", setup_solve$D_direct_multiplier,    envir = globalenv())
   assign("F_funeral_multiplier", setup_solve$F_funeral_multiplier,  envir = globalenv())
   assign(".abc_config",         abc_config,                         envir = globalenv())
