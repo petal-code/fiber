@@ -52,6 +52,8 @@ excludes \code{"instantaneous"})
 Given the transmission tree (\code{tdf}) returned by
 \code{\link{branching_process_main}}, compute time-binned estimates of the
 reproduction number. Two flavours are supported:
+}
+\details{
 \describe{
 \item{Case (cohort) reproduction number, \eqn{R_c(t)}:}{
 For each case infected at calendar time \eqn{t}, the realised offspring
@@ -71,8 +73,7 @@ backward-looking -- it's the \eqn{R} that explains incidence at \eqn{t}
 given prior incidence.
 }
 }
-}
-\details{
+
 Cases with \code{offspring_generated == FALSE} are excluded with a warning
 indicating the count removed. These are typically trailing cases whose
 offspring weren't computed before the simulation hit its size cap

@@ -37,7 +37,7 @@ for time from outcome to funeral infections.}
 
 \item{obv_pep_enabled}{Logical scalar. If TRUE, applies an OBV PEP infection-prevention
 gate around the safe-funeral thinning step. By default \code{obv_pep_target_locations
-= "hospital"}, so funeral exposures are not eligible; set
+  = "hospital"}, so funeral exposures are not eligible; set
 \code{obv_pep_target_locations = c("hospital", "funeral", ...)} to broaden.}
 
 \item{obv_pep_coverage}{Numeric in \code{[0,1]} or function(t). Probability a
