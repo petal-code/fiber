@@ -23,6 +23,11 @@ offspring_function_funeral(
 )
 }
 \arguments{
+\item{parent_info}{One-row data.frame/list of parent attributes. Funeral transmission reads
+\code{hospitalisation}, \code{time_hospitalisation_relative}, \code{time_outcome_relative}, \code{outcome}
+(did the parent die?), \code{class} ("genPop"/"HCW"), \code{funeral_safety} ("safe"/"unsafe") and
+\code{time_infection_absolute}.}
+
 \item{mn_offspring_funeral}{Positive numeric or function(t). Mean of the NB distribution for the
 number of offspring at an unsafe funeral. May be supplied as a single positive scalar or as a
 function of absolute calendar time (e.g. built with \code{\link{make_time_varying}}); when
@@ -64,30 +69,6 @@ Defaults to \code{"hospital"} for HCW occupational exposures.}
 \item{prob_hcw_cond_funeral_hcw}{Numeric between 0 and 1. Probability a funeral infection is an HCW.}
 
 \item{prob_hcw_cond_funeral_genPop}{Numeric between 0 and 1. Probability a funeral infection is a GenPop}
-
-\item{parent_hospitalised}{Logical scalar. Whether the parent was hospitalised.}
-
-\item{parent_time_to_hospitalisation}{Numeric scalar
-Time from infection to admission; NA if not hospitalised.}
-
-\item{parent_time_to_outcome}{Numeric scalar.
-Time from infection to outcome (death/recovery), have this already.}
-
-\item{parent_died}{Logical scalar. Whether the parent died (TRUE) or recovered (FALSE).}
-
-\item{parent_class}{Character scalar, either "genPop" or "HCW". Class of the parent.}
-
-\item{p_unsafe_funeral_comm_hcw}{Numeric between 0 and 1. Probability that a \strong{community} death of a HCW leads
-to an unsafe funeral.}
-
-\item{p_unsafe_funeral_hosp_hcw}{Numeric between 0 and 1. Probability that a \strong{hospital} death of a HCW  leads
-to an unsafe funeral (may be small but non-zero for completeness).}
-
-\item{p_unsafe_funeral_comm_genPop}{Numeric between 0 and 1. Probability that a \strong{community} death of a genPop leads
-to an unsafe funeral.}
-
-\item{p_unsafe_funeral_hosp_genPop}{Numeric between 0 and 1. Probability that a \strong{hospital} death of a genPop leads
-to an unsafe funeral (may be small but non-zero for completeness).}
 }
 \value{
 A data.frame with one row per realised funeral offspring and columns:
