@@ -3,3 +3,4 @@
 ^\.github$
 ^CLAUDE\.md$
 ^codecov\.yml$
+^LICENSE$
