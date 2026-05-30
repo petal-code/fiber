@@ -62,15 +62,35 @@ function reproduces the equivalent scalar run bit-for-bit under a fixed seed (no
 
 ### Medical Countermeasures (MCMs)
 
-Four intervention mechanisms with efficacy parameters:
-- Hospital quarantine (reduces post-admission transmission)
-- PPE/IPC for HCWs (reduces pre-admission hospital transmission, plus receiver-PPE for HCW recipients in hospital)
-- Safe burial practices (reduces funeral transmission)
-- **Obeldesivir (OBV) PEP** — post-exposure prophylaxis for exposed candidates in target class/locations (default: HCWs at hospital)
+Four intervention mechanisms. The three NPIs are each parameterised as a
+time-varying **coverage** lever (probability the intervention reaches a given
+exposure) times a fixed scalar **efficacy** (effect conditional on reaching it).
+The intended fitting workflow pre-specifies the coverage curves from the
+literature and varies the efficacies.
 
-Hospital keep-probability composes the first two multiplicatively (Swiss-cheese):
-`(1 − source_PPE) × (1 − receiver_PPE) × (1 − hospital_quarantine)`.
-OBV PEP is then applied as an additional, independent thinning step on top of that.
+- **Hospital / ETU quarantine** (reduces post-admission transmission). Coverage =
+  `prop_etu(t)`, the fraction of hospitalised cases managed in an ETU vs a general
+  hospital. The post-admission quarantine efficacy is the mixture
+  `prop_etu(t)·etu_efficacy + (1 − prop_etu(t))·general_hospital_quarantine_efficacy`,
+  where `etu_efficacy` and `general_hospital_quarantine_efficacy` are fixed,
+  independently-togglable scalars (no ordering enforced). A direct
+  `hospital_quarantine_efficacy` scalar/function(t) can still be supplied to
+  override the mixture.
+- **PPE/IPC for HCWs** (reduces pre-admission hospital transmission, plus
+  receiver-PPE for HCW recipients in hospital). Each PPE layer thins by
+  `ppe_coverage_hcw(t) · ppe_efficacy`, with `ppe_coverage_hcw` the time-varying
+  coverage and `ppe_efficacy` a fixed scalar shared by the source and receiver
+  layers.
+- **Safe burial practices** (reduces funeral transmission). Coverage =
+  `1 − p_unsafe_funeral_*(t)`; efficacy = `safe_funeral_efficacy` (fixed scalar).
+- **Obeldesivir (OBV) PEP** — post-exposure prophylaxis for exposed candidates in
+  target class/locations (default: HCWs at hospital). Pharmaceutical, not an NPI.
+
+Hospital keep-probability composes the PPE and quarantine layers multiplicatively
+(Swiss-cheese): `(1 − source_PPE) × (1 − receiver_PPE) × (1 − hospital_quarantine)`,
+where each PPE factor is `ppe_coverage_hcw(t)·ppe_efficacy` and `hospital_quarantine`
+is the ETU/general mixture above. OBV PEP is then applied as an additional,
+independent thinning step on top of that.
 
 ### OBV PEP details
 
@@ -101,6 +121,7 @@ Uses testthat (edition 3). Test files go in `tests/testthat/`. Current suites:
 - `test-time_varying_hospitalisation.R`
 - `test-time_varying_transmissibility.R`
 - `test-ppe_thinning.R`
+- `test-hospital_quarantine_efficacy.R`
 - `test-conditional_cfr.R`
 - `test-obv_pep.R`
 - `test-compute_reproduction_number.R`

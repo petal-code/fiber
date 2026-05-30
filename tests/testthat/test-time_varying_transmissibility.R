@@ -53,7 +53,8 @@ mean_offspring_genPop <- function(reps, parent, mn, base_seed = 0) {
       Tg_shape_genPop               = 2,
       Tg_rate_genPop                = 0.15,
       hospital_quarantine_efficacy  = 0.5,
-      ppe_efficacy_hcw              = 0.5,
+      ppe_coverage_hcw              = 0.5,
+      ppe_efficacy                  = 1,
       prob_hcw_cond_genPop_comm     = 0,
       prob_hcw_cond_genPop_hospital = 0.3
     ))
@@ -114,7 +115,8 @@ bpm_args <- function(...) {
     prob_hcw_cond_hcw_comm        = 0.01,
     prob_hcw_cond_hcw_hospital    = 0.3,
     prob_hospital_cond_hcw_preAdm = 0.5,
-    ppe_efficacy_hcw              = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
     hospital_quarantine_efficacy  = 0.5,
     p_unsafe_funeral_comm_hcw     = 0.5,
     p_unsafe_funeral_hosp_hcw     = 0.2,
@@ -158,7 +160,8 @@ test_that("offspring_function_genPop accepts a scalar mn (back-compatible)", {
     Tg_shape_genPop               = 2,
     Tg_rate_genPop                = 0.15,
     hospital_quarantine_efficacy  = 0.5,
-    ppe_efficacy_hcw              = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
     prob_hcw_cond_genPop_comm     = 0,
     prob_hcw_cond_genPop_hospital = 0.3
   )
@@ -177,7 +180,8 @@ test_that("a constant function(t) reproduces the scalar exactly (genPop)", {
     Tg_shape_genPop               = 2,
     Tg_rate_genPop                = 0.15,
     hospital_quarantine_efficacy  = 0.5,
-    ppe_efficacy_hcw              = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
     prob_hcw_cond_genPop_comm     = 0,
     prob_hcw_cond_genPop_hospital = 0.3
   )
@@ -190,7 +194,8 @@ test_that("a constant function(t) reproduces the scalar exactly (genPop)", {
     Tg_shape_genPop               = 2,
     Tg_rate_genPop                = 0.15,
     hospital_quarantine_efficacy  = 0.5,
-    ppe_efficacy_hcw              = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
     prob_hcw_cond_genPop_comm     = 0,
     prob_hcw_cond_genPop_hospital = 0.3
   )
@@ -246,7 +251,8 @@ test_that("offspring functions reject a non-positive scalar mn", {
       Tg_shape_genPop               = 2,
       Tg_rate_genPop                = 0.15,
       hospital_quarantine_efficacy  = 0.5,
-      ppe_efficacy_hcw              = 0.5,
+      ppe_coverage_hcw              = 0.5,
+      ppe_efficacy                  = 1,
       prob_hcw_cond_genPop_comm     = 0,
       prob_hcw_cond_genPop_hospital = 0.3
     ),

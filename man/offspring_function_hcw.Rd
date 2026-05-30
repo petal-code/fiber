@@ -11,11 +11,12 @@ offspring_function_hcw(
   Tg_shape_hcw = NULL,
   Tg_rate_hcw = NULL,
   prob_hospital_cond_hcw_preAdm = NULL,
-  ppe_efficacy_hcw = NULL,
+  ppe_coverage_hcw = NULL,
+  ppe_efficacy = NULL,
   hospital_quarantine_efficacy = NULL,
   prop_etu = NULL,
-  ipc_helper = NULL,
-  etu_efficacy_baseline = NULL,
+  etu_efficacy = NULL,
+  general_hospital_quarantine_efficacy = NULL,
   obv_pep_enabled = FALSE,
   obv_pep_coverage = 0,
   obv_pep_adherence = 1,
@@ -48,27 +49,34 @@ for HCW parents (before truncation). Mean GT is \code{Tg_shape_hcw / Tg_rate_hcw
 \item{prob_hospital_cond_hcw_preAdm}{Numeric in \code{[0,1]}. Probability that a pre-admission
 candidate infection occurs in the hospital setting while the HCW is working.}
 
-\item{ppe_efficacy_hcw}{Numeric in \code{[0,1]} or function(t). Per-PPE-layer efficacy of PPE worn
-by HCWs at reducing hospital transmission. Applied as a source layer when the HCW parent is
-still working pre-admission, and as an independent receiver layer whenever the recipient is an
-HCW; the two combine multiplicatively for pre-admission hospital events with HCW recipients
-(keep-probability \eqn{(1 - \mathrm{ppe})^2}). Resolved at the absolute calendar time of each
-candidate hospital transmission event in which PPE applies.}
+\item{ppe_coverage_hcw}{Numeric in \code{[0,1]} or function(t). Coverage: probability that an HCW
+(source or receiver) has PPE. Applied as a source layer when the HCW parent is still working
+pre-admission, and as an independent receiver layer whenever the recipient is an HCW; each layer
+thins by \code{ppe_coverage_hcw(t) * ppe_efficacy}, and the two combine multiplicatively for
+pre-admission hospital events with HCW recipients (keep-probability
+\eqn{(1 - \mathrm{ppe\_coverage\_hcw}(t)\,\mathrm{ppe\_efficacy})^2}). Coverage is resolved at the
+absolute calendar time of each candidate hospital transmission event in which PPE applies.}
+
+\item{ppe_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Efficacy of PPE at preventing infection
+conditional on the HCW having it. Shared by the source and receiver PPE layers; combined with
+\code{ppe_coverage_hcw} as a single per-event thinning probability \code{ppe_coverage_hcw(t) * ppe_efficacy}.}
 
 \item{hospital_quarantine_efficacy}{Optional numeric in \code{[0,1]} or function(t). Direct
-effective hospital admission/ETU/quarantine efficacy at reducing post-admission hospital
+effective post-admission hospital quarantine efficacy at reducing post-admission hospital
 transmission. If supplied, this is used directly and resolved at the absolute calendar time
-of each candidate post-admission hospital infection. If \code{NULL}, efficacy is calculated
-from \code{prop_etu}, \code{ipc_helper}, and \code{etu_efficacy_baseline}.}
+of each candidate post-admission hospital infection, overriding the derived formula. If
+\code{NULL}, efficacy is calculated from \code{prop_etu}, \code{etu_efficacy}, and
+\code{general_hospital_quarantine_efficacy}.}
 
 \item{prop_etu}{Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases managed
-in ETU/ETC care at time \code{t}; used when \code{hospital_quarantine_efficacy = NULL}.}
+in ETU/ETC care at time \code{t} (the time-varying "coverage" lever for hospital quarantine);
+used when \code{hospital_quarantine_efficacy = NULL}.}
 
-\item{ipc_helper}{Numeric in \code{[0,1]} or function(t). Time-varying IPC/response maturity
-proxy at time \code{t}; used when \code{hospital_quarantine_efficacy = NULL}.}
+\item{etu_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Post-admission quarantine efficacy
+for cases managed in ETU/ETC care; used when \code{hospital_quarantine_efficacy = NULL}.}
 
-\item{etu_efficacy_baseline}{Numeric between 0 and 1. Baseline transmission-blocking efficacy
-of ETU/ETC care before additional IPC maturity improvements; used when
+\item{general_hospital_quarantine_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Post-admission
+quarantine efficacy for cases managed in general (non-ETU) hospital care; used when
 \code{hospital_quarantine_efficacy = NULL}.}
 
 \item{obv_pep_enabled}{Logical scalar. If TRUE, applies an OBV PEP infection-prevention
@@ -122,9 +130,10 @@ hospital events with an HCW recipient (pre- or post-admission).
 a hospitalised, isolated HCW patient).
 }
 Hospital keep-probability is therefore
-\eqn{(1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe}(t) \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])}.
-All time-varying efficacies are resolved at the absolute calendar time of each candidate
-hospital transmission event. Post-admission hospital quarantine efficacy can either be
-supplied directly or calculated internally from ETU/ETC coverage, IPC maturity, and baseline
-ETU efficacy.
+\eqn{(1 - \mathrm{ppe\_cov}(t)\,\mathrm{ppe\_eff} \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe\_cov}(t)\,\mathrm{ppe\_eff} \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])},
+where each PPE layer thins by coverage times conditional efficacy. Time-varying inputs are
+resolved at the absolute calendar time of each candidate hospital transmission event.
+Post-admission hospital quarantine efficacy can either be supplied directly or calculated
+internally as a \code{prop_etu(t)}-weighted mixture of the (fixed) ETU and general-hospital
+quarantine efficacies.
 }

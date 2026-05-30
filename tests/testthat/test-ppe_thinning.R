@@ -77,7 +77,8 @@ test_that("genPop parent: PPE thins HCW recipients at hospital (Issue A)", {
     Tg_shape_genPop               = 4,
     Tg_rate_genPop                = 1,
     hospital_quarantine_efficacy  = 0,
-    ppe_efficacy_hcw              = 1,
+    ppe_coverage_hcw              = 1,
+    ppe_efficacy                  = 1,
     prob_hcw_cond_genPop_comm     = 0,
     prob_hcw_cond_genPop_hospital = 0.5
   )
@@ -102,7 +103,8 @@ test_that("genPop parent: hospital_quarantine_efficacy = 1 zeroes all hospital e
     Tg_shape_genPop               = 4,
     Tg_rate_genPop                = 1,
     hospital_quarantine_efficacy  = 1,
-    ppe_efficacy_hcw              = 0,
+    ppe_coverage_hcw              = 0,
+    ppe_efficacy                  = 1,
     prob_hcw_cond_genPop_comm     = 0,
     prob_hcw_cond_genPop_hospital = 0.5
   )
@@ -124,7 +126,8 @@ test_that("HCW post-admission parent: receiver PPE thins HCW recipients (Issue B
     Tg_shape_hcw                    = 4,
     Tg_rate_hcw                     = 1,
     prob_hospital_cond_hcw_preAdm   = 0.5,
-    ppe_efficacy_hcw                = 1,
+    ppe_coverage_hcw                = 1,
+    ppe_efficacy                    = 1,
     hospital_quarantine_efficacy    = 0,
     prob_hcw_cond_hcw_comm          = 0,
     prob_hcw_cond_hcw_hospital      = 0.5
@@ -149,7 +152,8 @@ test_that("HCW pre-admission only: source PPE blocks all hospital events", {
     Tg_shape_hcw                    = 4,
     Tg_rate_hcw                     = 1,
     prob_hospital_cond_hcw_preAdm   = 0.5,
-    ppe_efficacy_hcw                = 1,
+    ppe_coverage_hcw                = 1,
+    ppe_efficacy                    = 1,
     hospital_quarantine_efficacy    = 0,
     prob_hcw_cond_hcw_comm          = 0.2,
     prob_hcw_cond_hcw_hospital      = 0.5
@@ -161,11 +165,13 @@ test_that("HCW pre-admission only: source PPE blocks all hospital events", {
 })
 
 ## --- Option B multiplicative PPE -------------------------------------
-## HCW pre-admission with HCW recipient: keep = (1-ppe)^2 (source + receiver),
-## while HCW pre-admission with genPop recipient: keep = (1-ppe) (source only).
-## With prob_hcw_cond_hcw_hospital = 0.5, the expected HCW fraction of the
-## *surviving* pre-admission hospital cohort is 0.5*(1-ppe)^2 / [0.5*(1-ppe)^2 + 0.5*(1-ppe)]
-## = (1-ppe) / (1 + (1-ppe)).  With ppe = 0.5 that's 0.5/1.5 = 1/3.
+## The per-layer PPE thinning is ppe = ppe_coverage_hcw * ppe_efficacy (= 0.5 * 1
+## below). HCW pre-admission with HCW recipient: keep = (1-ppe)^2 (source +
+## receiver), while HCW pre-admission with genPop recipient: keep = (1-ppe)
+## (source only). With prob_hcw_cond_hcw_hospital = 0.5, the expected HCW fraction
+## of the *surviving* pre-admission hospital cohort is
+## 0.5*(1-ppe)^2 / [0.5*(1-ppe)^2 + 0.5*(1-ppe)] = (1-ppe) / (1 + (1-ppe)).
+## With ppe = 0.5 that's 0.5/1.5 = 1/3.
 test_that("HCW pre-admission HCW receiver: multiplicative PPE produces (1-ppe)^2 keep prob", {
   parent <- make_parent_info_HCW(hospitalised = FALSE, time_to_outcome = 30)
   set.seed(123)
@@ -176,7 +182,8 @@ test_that("HCW pre-admission HCW receiver: multiplicative PPE produces (1-ppe)^2
     Tg_shape_hcw                    = 4,
     Tg_rate_hcw                     = 1,
     prob_hospital_cond_hcw_preAdm   = 0.5,
-    ppe_efficacy_hcw                = 0.5,
+    ppe_coverage_hcw                = 0.5,
+    ppe_efficacy                    = 1,
     hospital_quarantine_efficacy    = 0,
     prob_hcw_cond_hcw_comm          = 0,
     prob_hcw_cond_hcw_hospital      = 0.5
@@ -245,4 +252,143 @@ test_that("Funeral: safe funeral with efficacy = 0 behaves like unsafe", {
     prob_hcw_cond_funeral_genPop = 0.1
   )
   expect_equal(nrow(res_safe), nrow(res_unsafe))
+})
+
+## --- PPE coverage x efficacy decomposition --------------------------------
+## The PPE layer thins by coverage * efficacy. Two parameterisations with the
+## same product must give bit-identical results under a fixed seed: the keep
+## probability collapses to (1 - coverage*efficacy) and the split consumes no
+## extra RNG.
+test_that("PPE: equal coverage*efficacy products give identical draws (genPop)", {
+  parent <- make_parent_info_genPop_hospitalised(time_to_hospitalisation = 0.001)
+
+  set.seed(2024)
+  res_a <- offspring_function_genPop(
+    parent_info                   = parent,
+    mn_offspring_genPop           = 500,
+    overdisp_offspring_genPop     = 200,
+    Tg_shape_genPop               = 4,
+    Tg_rate_genPop                = 1,
+    hospital_quarantine_efficacy  = 0,
+    ppe_coverage_hcw              = 1,
+    ppe_efficacy                  = 0.5,
+    prob_hcw_cond_genPop_comm     = 0,
+    prob_hcw_cond_genPop_hospital = 0.5
+  )
+
+  set.seed(2024)
+  res_b <- offspring_function_genPop(
+    parent_info                   = parent,
+    mn_offspring_genPop           = 500,
+    overdisp_offspring_genPop     = 200,
+    Tg_shape_genPop               = 4,
+    Tg_rate_genPop                = 1,
+    hospital_quarantine_efficacy  = 0,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
+    prob_hcw_cond_genPop_comm     = 0,
+    prob_hcw_cond_genPop_hospital = 0.5
+  )
+
+  expect_identical(res_a$class, res_b$class)
+  expect_identical(res_a$infection_location, res_b$infection_location)
+  expect_identical(res_a$time_infection_relative, res_b$time_infection_relative)
+})
+
+test_that("PPE: equal coverage*efficacy products give identical draws (HCW)", {
+  parent <- make_parent_info_HCW(hospitalised = FALSE, time_to_outcome = 30)
+
+  set.seed(321)
+  res_a <- offspring_function_hcw(
+    parent_info                     = parent,
+    mn_offspring_hcw                = 4000,
+    overdisp_offspring_hcw          = 2000,
+    Tg_shape_hcw                    = 4,
+    Tg_rate_hcw                     = 1,
+    prob_hospital_cond_hcw_preAdm   = 0.5,
+    ppe_coverage_hcw                = 1,
+    ppe_efficacy                    = 0.5,
+    hospital_quarantine_efficacy    = 0,
+    prob_hcw_cond_hcw_comm          = 0,
+    prob_hcw_cond_hcw_hospital      = 0.5
+  )
+
+  set.seed(321)
+  res_b <- offspring_function_hcw(
+    parent_info                     = parent,
+    mn_offspring_hcw                = 4000,
+    overdisp_offspring_hcw          = 2000,
+    Tg_shape_hcw                    = 4,
+    Tg_rate_hcw                     = 1,
+    prob_hospital_cond_hcw_preAdm   = 0.5,
+    ppe_coverage_hcw                = 0.5,
+    ppe_efficacy                    = 1,
+    hospital_quarantine_efficacy    = 0,
+    prob_hcw_cond_hcw_comm          = 0,
+    prob_hcw_cond_hcw_hospital      = 0.5
+  )
+
+  expect_identical(res_a$class, res_b$class)
+  expect_identical(res_a$infection_location, res_b$infection_location)
+  expect_identical(res_a$time_infection_relative, res_b$time_infection_relative)
+})
+
+## At full coverage, the efficacy knob alone controls thinning: efficacy = 0
+## leaves HCW hospital recipients un-thinned, efficacy = 1 removes them all.
+test_that("PPE: efficacy modulates thinning at fixed (full) coverage (genPop)", {
+  parent <- make_parent_info_genPop_hospitalised(time_to_hospitalisation = 0.001)
+
+  set.seed(11)
+  res_eff0 <- offspring_function_genPop(
+    parent_info                   = parent,
+    mn_offspring_genPop           = 500,
+    overdisp_offspring_genPop     = 200,
+    Tg_shape_genPop               = 4,
+    Tg_rate_genPop                = 1,
+    hospital_quarantine_efficacy  = 0,
+    ppe_coverage_hcw              = 1,
+    ppe_efficacy                  = 0,
+    prob_hcw_cond_genPop_comm     = 0,
+    prob_hcw_cond_genPop_hospital = 0.5
+  )
+  hosp0 <- res_eff0[res_eff0$infection_location == "hospital", ]
+  expect_true(sum(hosp0$class == "HCW") > 0,
+              info = "efficacy = 0 should leave HCW hospital recipients un-thinned")
+
+  set.seed(11)
+  res_eff1 <- offspring_function_genPop(
+    parent_info                   = parent,
+    mn_offspring_genPop           = 500,
+    overdisp_offspring_genPop     = 200,
+    Tg_shape_genPop               = 4,
+    Tg_rate_genPop                = 1,
+    hospital_quarantine_efficacy  = 0,
+    ppe_coverage_hcw              = 1,
+    ppe_efficacy                  = 1,
+    prob_hcw_cond_genPop_comm     = 0,
+    prob_hcw_cond_genPop_hospital = 0.5
+  )
+  hosp1 <- res_eff1[res_eff1$infection_location == "hospital", ]
+  expect_equal(sum(hosp1$class == "HCW"), 0,
+               info = "efficacy = 1 at full coverage should remove all HCW hospital recipients")
+})
+
+## ppe_efficacy is a required scalar in [0, 1]; an out-of-range value is rejected.
+test_that("PPE: ppe_efficacy must be a scalar in [0, 1]", {
+  parent <- make_parent_info_genPop_hospitalised(time_to_hospitalisation = 0.001)
+  expect_error(
+    offspring_function_genPop(
+      parent_info                   = parent,
+      mn_offspring_genPop           = 10,
+      overdisp_offspring_genPop     = 5,
+      Tg_shape_genPop               = 4,
+      Tg_rate_genPop                = 1,
+      hospital_quarantine_efficacy  = 0,
+      ppe_coverage_hcw              = 1,
+      ppe_efficacy                  = 1.5,
+      prob_hcw_cond_genPop_comm     = 0,
+      prob_hcw_cond_genPop_hospital = 0.5
+    ),
+    "ppe_efficacy"
+  )
 })

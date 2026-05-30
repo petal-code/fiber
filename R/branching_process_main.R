@@ -73,11 +73,12 @@ branching_process_main <- function(
 
   ## Setting model for HCWs
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that an infection generated prior to parent hospitaliation occurs in the hospital (whilst HCW is working)
-  ppe_efficacy_hcw = NULL,                  # scalar or function(t): efficacy of PPE/IPC measures at reducing transmission (i.e. pre hospitalisation)
-  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct quarantine/ETU efficacy, retained for backwards compatibility
-  prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care
-  ipc_helper = NULL,                        # scalar/function(t): IPC/response maturity proxy
-  etu_efficacy_baseline = NULL,             # scalar: baseline ETU/ETC efficacy before IPC maturity adjustment
+  ppe_coverage_hcw = NULL,                  # scalar or function(t): coverage/probability that a relevant HCW has PPE (time-varying coverage lever)
+  ppe_efficacy = NULL,                      # scalar: efficacy of PPE at preventing infection conditional on having it
+  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct post-admission quarantine efficacy override, retained for backwards compatibility
+  prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care (time-varying coverage lever)
+  etu_efficacy = NULL,                      # scalar: post-admission quarantine efficacy for ETU/ETC care
+  general_hospital_quarantine_efficacy = NULL,  # scalar: post-admission quarantine efficacy for general (non-ETU) hospital care
 
   ## Obeldesivir PEP. The gate is applied around the Swiss-cheese thinning step
   ## in each offspring function: treatment status (received, adherent, DPC) is
@@ -144,37 +145,51 @@ branching_process_main <- function(
   }
 
   ## Hospital quarantine efficacy can either be supplied directly for backwards
-  ## compatibility, or derived inside the offspring functions from ETU coverage,
-  ## IPC maturity, and baseline ETU efficacy. Check this here so missing inputs
-  ## fail early with a clear message rather than failing downstream.
+  ## compatibility, or derived inside the offspring functions as a prop_etu(t)
+  ## mixture of etu_efficacy and general_hospital_quarantine_efficacy. Check this
+  ## here so missing inputs fail early with a clear message rather than failing
+  ## downstream.
   has_direct_hospital_efficacy <- !is.null(hospital_quarantine_efficacy)
 
   has_derived_hospital_efficacy_inputs <-
     !is.null(prop_etu) &&
-    !is.null(ipc_helper) &&
-    !is.null(etu_efficacy_baseline)
+    !is.null(etu_efficacy) &&
+    !is.null(general_hospital_quarantine_efficacy)
 
   if (!has_direct_hospital_efficacy && !has_derived_hospital_efficacy_inputs) {
     stop(
       paste(
         "Supply either `hospital_quarantine_efficacy` or all of",
-        "`prop_etu`, `ipc_helper`, and `etu_efficacy_baseline`."
+        "`prop_etu`, `etu_efficacy`, and `general_hospital_quarantine_efficacy`."
       ),
       call. = FALSE
     )
   }
 
-  if (!is.null(etu_efficacy_baseline)) {
-    if (!is.numeric(etu_efficacy_baseline) ||
-        length(etu_efficacy_baseline) != 1L ||
-        is.na(etu_efficacy_baseline) ||
-        etu_efficacy_baseline < 0 ||
-        etu_efficacy_baseline > 1) {
-      stop(
-        "`etu_efficacy_baseline` must be a single numeric value between 0 and 1.",
-        call. = FALSE
-      )
+  ## Fixed scalar efficacies in [0, 1]. `ppe_efficacy` is always required (PPE may
+  ## apply in any run); the ETU / general-hospital quarantine efficacies are only
+  ## needed when the post-admission quarantine efficacy is derived (i.e. when
+  ## `hospital_quarantine_efficacy` is not supplied directly). These efficacies are
+  ## deliberately scalar-only: the time-varying response enters through the coverage
+  ## levers (`ppe_coverage_hcw`, `prop_etu`), not the efficacies. The ETU and
+  ## general-hospital efficacies are independently togglable; no ordering between
+  ## them is enforced.
+  validate_scalar_probability <- function(param, param_name) {
+    if (!is.numeric(param) ||
+        length(param) != 1L ||
+        is.na(param) ||
+        param < 0 ||
+        param > 1) {
+      stop(sprintf("`%s` must be a single numeric value between 0 and 1.", param_name),
+           call. = FALSE)
     }
+  }
+
+  validate_scalar_probability(ppe_efficacy, "ppe_efficacy")
+  if (!has_direct_hospital_efficacy) {
+    validate_scalar_probability(etu_efficacy, "etu_efficacy")
+    validate_scalar_probability(general_hospital_quarantine_efficacy,
+                                "general_hospital_quarantine_efficacy")
   }
 
   if (!is.logical(obv_pep_enabled) || length(obv_pep_enabled) != 1L || is.na(obv_pep_enabled)) {
@@ -216,10 +231,9 @@ branching_process_main <- function(
     p_unsafe_funeral_hosp_hcw     = p_unsafe_funeral_hosp_hcw,
     p_unsafe_funeral_comm_genPop  = p_unsafe_funeral_comm_genPop,
     p_unsafe_funeral_hosp_genPop  = p_unsafe_funeral_hosp_genPop,
-    ppe_efficacy_hcw              = ppe_efficacy_hcw,
+    ppe_coverage_hcw              = ppe_coverage_hcw,
     hospital_quarantine_efficacy  = hospital_quarantine_efficacy,
     prop_etu                      = prop_etu,
-    ipc_helper                    = ipc_helper,
     obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence
   )
@@ -402,13 +416,13 @@ branching_process_main <- function(
     ###################################################################################################################
     ### Step 2: Generate offspring associated with community and (if hospitalised) healthcare associated transmission
     ###################################################################################################################
-    ## Pass scalar-or-time-varying response efficacy parameters into the offspring
-    ## functions directly. Those functions know the candidate transmission times,
-    ## so they can resolve PPE/IPC and post-admission hospital quarantine/ETU
-    ## efficacy at the actual absolute calendar time of each candidate hospital
-    ## exposure. Hospital quarantine efficacy can be supplied directly, or
-    ## calculated inside the offspring functions from prop_etu(t), ipc_helper(t),
-    ## and etu_efficacy_baseline.
+    ## Pass scalar-or-time-varying response parameters into the offspring functions
+    ## directly. Those functions know the candidate transmission times, so they can
+    ## resolve PPE coverage and post-admission hospital quarantine/ETU efficacy at the
+    ## actual absolute calendar time of each candidate hospital exposure. PPE thinning
+    ## is ppe_coverage_hcw(t) * ppe_efficacy; hospital quarantine efficacy can be
+    ## supplied directly, or calculated inside the offspring functions as a
+    ## prop_etu(t)-weighted mixture of etu_efficacy and general_hospital_quarantine_efficacy.
 
     if (parent_info$class == "genPop") {
       offspring_community_healthcare_df <- offspring_function_genPop(parent_info = parent_info,
@@ -418,8 +432,8 @@ branching_process_main <- function(
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                      prop_etu = prop_etu,
-                                                                     ipc_helper = ipc_helper,
-                                                                     etu_efficacy_baseline = etu_efficacy_baseline,
+                                                                     etu_efficacy = etu_efficacy,
+                                                                     general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
                                                                      obv_pep_enabled = obv_pep_enabled,
                                                                      obv_pep_coverage = obv_pep_coverage,
                                                                      obv_pep_adherence = obv_pep_adherence,
@@ -427,7 +441,8 @@ branching_process_main <- function(
                                                                      obv_pep_efficacy = obv_pep_efficacy,
                                                                      obv_pep_target_class = obv_pep_target_class,
                                                                      obv_pep_target_locations = obv_pep_target_locations,
-                                                                     ppe_efficacy_hcw = ppe_efficacy_hcw,
+                                                                     ppe_coverage_hcw = ppe_coverage_hcw,
+                                                                     ppe_efficacy = ppe_efficacy,
                                                                      prob_hcw_cond_genPop_comm = prob_hcw_cond_genPop_comm,
                                                                      prob_hcw_cond_genPop_hospital = prob_hcw_cond_genPop_hospital)
     } else if (parent_info$class == "HCW") {
@@ -441,11 +456,12 @@ branching_process_main <- function(
                                                                   Tg_shape_hcw = Tg_shape_hcw,
                                                                   Tg_rate_hcw = Tg_rate_hcw,
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
-                                                                  ppe_efficacy_hcw = ppe_efficacy_hcw,
+                                                                  ppe_coverage_hcw = ppe_coverage_hcw,
+                                                                  ppe_efficacy = ppe_efficacy,
                                                                   hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                   prop_etu = prop_etu,
-                                                                  ipc_helper = ipc_helper,
-                                                                  etu_efficacy_baseline = etu_efficacy_baseline,
+                                                                  etu_efficacy = etu_efficacy,
+                                                                  general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
                                                                   obv_pep_enabled = obv_pep_enabled,
                                                                   obv_pep_coverage = obv_pep_coverage,
                                                                   obv_pep_adherence = obv_pep_adherence,

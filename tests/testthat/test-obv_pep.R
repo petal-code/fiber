@@ -45,7 +45,8 @@ obv_off_args <- function() {
     Tg_shape_genPop              = 4,
     Tg_rate_genPop               = 1,
     hospital_quarantine_efficacy = 0,
-    ppe_efficacy_hcw             = 0,
+    ppe_coverage_hcw             = 0,
+    ppe_efficacy                 = 1,
     prob_hcw_cond_genPop_comm    = 0,
     prob_hcw_cond_genPop_hospital = 1
   )
