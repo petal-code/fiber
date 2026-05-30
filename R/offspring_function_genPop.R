@@ -13,11 +13,10 @@
 #' wear PPE while treating the hospitalised case). Hospital keep-probability for a genPop
 #' recipient is \eqn{1 - \mathrm{hospital\_quarantine\_efficacy}(t)} and for an HCW recipient
 #' is \eqn{(1 - \mathrm{hospital\_quarantine\_efficacy}(t))(1 - \mathrm{ppe\_coverage\_hcw}(t)\,\mathrm{ppe\_efficacy})},
-#' i.e. the PPE layer thins by coverage times conditional efficacy. By default,
+#' i.e. the PPE layer thins by coverage times conditional efficacy. The post-admission
 #' \code{hospital_quarantine_efficacy(t)} is calculated internally as a \code{prop_etu(t)}-weighted
 #' mixture of the (fixed) ETU and general-hospital quarantine efficacies at each candidate hospital
-#' transmission time. A direct scalar or time-varying \code{hospital_quarantine_efficacy} can still
-#' be supplied for backwards compatibility.
+#' transmission time.
 #'
 #' @param parent_info One-row data.frame/list containing parent infection, hospitalisation and outcome times.
 #' @param mn_offspring_genPop Positive numeric or function(t). Mean of the Negative Binomial offspring
@@ -31,19 +30,14 @@
 #'   for genPop parents (before truncation).
 #' @param Tg_rate_genPop Positive numeric. Rate of the Gamma generation-time distribution
 #'   for genPop parents (before truncation). Mean GT is \code{Tg_shape_genPop / Tg_rate_genPop}.
-#' @param hospital_quarantine_efficacy Optional numeric in \code{[0,1]} or function(t). Direct
-#'   effective post-admission hospital quarantine efficacy at reducing post-admission transmission.
-#'   If supplied, this is used directly and resolved at the absolute calendar time of each
-#'   candidate hospital infection, overriding the derived formula. If \code{NULL}, efficacy is
-#'   calculated from \code{prop_etu}, \code{etu_efficacy}, and \code{general_hospital_quarantine_efficacy}.
 #' @param prop_etu Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases managed
-#'   in ETU/ETC care at time \code{t} (the time-varying "coverage" lever for hospital quarantine);
-#'   used when \code{hospital_quarantine_efficacy = NULL}.
+#'   in ETU/ETC care at time \code{t} (the time-varying "coverage" lever for hospital quarantine).
+#'   The post-admission hospital quarantine efficacy is derived as the prop_etu(t)-weighted mixture
+#'   \code{prop_etu(t) * etu_efficacy + (1 - prop_etu(t)) * general_hospital_quarantine_efficacy}.
 #' @param etu_efficacy Numeric in \code{[0,1]} (fixed scalar). Post-admission quarantine efficacy
-#'   for cases managed in ETU/ETC care; used when \code{hospital_quarantine_efficacy = NULL}.
+#'   for cases managed in ETU/ETC care.
 #' @param general_hospital_quarantine_efficacy Numeric in \code{[0,1]} (fixed scalar). Post-admission
-#'   quarantine efficacy for cases managed in general (non-ETU) hospital care; used when
-#'   \code{hospital_quarantine_efficacy = NULL}.
+#'   quarantine efficacy for cases managed in general (non-ETU) hospital care.
 #' @param obv_pep_enabled Logical scalar. If TRUE, applies an OBV PEP infection-prevention
 #'   gate around the Swiss-cheese thinning step. The gate composes multiplicatively with the
 #'   PPE/quarantine layers: a candidate must survive every protective layer (PPE source,
@@ -84,7 +78,6 @@ offspring_function_genPop <- function(
   overdisp_offspring_genPop = NULL,         # overdispersion of the offspring distribution for general population
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
-  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct post-admission quarantine efficacy override, retained for backwards compatibility
   prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care (time-varying coverage lever)
   etu_efficacy = NULL,                      # scalar: post-admission quarantine efficacy for ETU/ETC care
   general_hospital_quarantine_efficacy = NULL,  # scalar: post-admission quarantine efficacy for general (non-ETU) hospital care
@@ -148,14 +141,6 @@ offspring_function_genPop <- function(
   }
 
   resolve_hospital_quarantine_efficacy <- function(t) {
-    if (!is.null(hospital_quarantine_efficacy)) {
-      return(resolve_probability(
-        hospital_quarantine_efficacy,
-        t,
-        "hospital_quarantine_efficacy"
-      ))
-    }
-
     prop_etu_t <- resolve_probability(prop_etu, t, "prop_etu")
 
     ## Post-admission quarantine efficacy is a coverage-style mixture over where a
@@ -225,13 +210,9 @@ offspring_function_genPop <- function(
       stop(sprintf("`%s` must be a single numeric value in [0, 1].", nm), call. = FALSE)
     }
   }
-  if (!is.null(hospital_quarantine_efficacy)) {
-    validate_probability_or_time_varying(hospital_quarantine_efficacy, "hospital_quarantine_efficacy")
-  } else {
-    validate_probability_or_time_varying(prop_etu, "prop_etu")
-    validate_probability_scalar(etu_efficacy, "etu_efficacy")
-    validate_probability_scalar(general_hospital_quarantine_efficacy, "general_hospital_quarantine_efficacy")
-  }
+  validate_probability_or_time_varying(prop_etu, "prop_etu")
+  validate_probability_scalar(etu_efficacy, "etu_efficacy")
+  validate_probability_scalar(general_hospital_quarantine_efficacy, "general_hospital_quarantine_efficacy")
   validate_probability_or_time_varying(ppe_coverage_hcw, "ppe_coverage_hcw")
   validate_probability_scalar(ppe_efficacy, "ppe_efficacy")
 
@@ -274,9 +255,8 @@ offspring_function_genPop <- function(
 
   # Step 5: Compute per-event keep probability under two protective layers (Swiss-cheese multiplicative).
   #   - Hospital quarantine: applies to every hospital event (genPop source is a hospitalised, isolated patient).
-  #     Resolved at the absolute calendar time of each candidate hospital transmission. Either supplied directly
-  #     as `hospital_quarantine_efficacy` or derived from prop_etu(t) as a mixture of the (fixed) ETU and
-  #     general-hospital quarantine efficacies:
+  #     Resolved at the absolute calendar time of each candidate hospital transmission as a prop_etu(t)
+  #     mixture of the (fixed) ETU and general-hospital quarantine efficacies:
   #       hospital_quarantine_efficacy(t) = prop_etu(t) * etu_efficacy + (1 - prop_etu(t)) * general_hospital_quarantine_efficacy
   #   - PPE: applies only to HCW recipients in the hospital setting (HCWs wear PPE while treating the source).
   #     The per-event PPE thinning probability is the coverage (probability the receiver has PPE) times the

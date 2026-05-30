@@ -75,7 +75,6 @@ branching_process_main <- function(
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that an infection generated prior to parent hospitaliation occurs in the hospital (whilst HCW is working)
   ppe_coverage_hcw = NULL,                  # scalar or function(t): coverage/probability that a relevant HCW has PPE (time-varying coverage lever)
   ppe_efficacy = NULL,                      # scalar: efficacy of PPE at preventing infection conditional on having it
-  hospital_quarantine_efficacy = NULL,      # optional scalar/function(t): direct post-admission quarantine efficacy override, retained for backwards compatibility
   prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care (time-varying coverage lever)
   etu_efficacy = NULL,                      # scalar: post-admission quarantine efficacy for ETU/ETC care
   general_hospital_quarantine_efficacy = NULL,  # scalar: post-admission quarantine efficacy for general (non-ETU) hospital care
@@ -144,36 +143,23 @@ branching_process_main <- function(
     value
   }
 
-  ## Hospital quarantine efficacy can either be supplied directly for backwards
-  ## compatibility, or derived inside the offspring functions as a prop_etu(t)
-  ## mixture of etu_efficacy and general_hospital_quarantine_efficacy. Check this
-  ## here so missing inputs fail early with a clear message rather than failing
-  ## downstream.
-  has_direct_hospital_efficacy <- !is.null(hospital_quarantine_efficacy)
-
-  has_derived_hospital_efficacy_inputs <-
-    !is.null(prop_etu) &&
-    !is.null(etu_efficacy) &&
-    !is.null(general_hospital_quarantine_efficacy)
-
-  if (!has_direct_hospital_efficacy && !has_derived_hospital_efficacy_inputs) {
+  ## Post-admission hospital quarantine efficacy is always derived inside the
+  ## offspring functions as a prop_etu(t) mixture of the ETU and general-hospital
+  ## quarantine efficacies. Require the full set up front so missing inputs fail
+  ## early with a clear message rather than failing downstream.
+  if (is.null(prop_etu) ||
+      is.null(etu_efficacy) ||
+      is.null(general_hospital_quarantine_efficacy)) {
     stop(
-      paste(
-        "Supply either `hospital_quarantine_efficacy` or all of",
-        "`prop_etu`, `etu_efficacy`, and `general_hospital_quarantine_efficacy`."
-      ),
+      "Supply all of `prop_etu`, `etu_efficacy`, and `general_hospital_quarantine_efficacy`.",
       call. = FALSE
     )
   }
 
-  ## Fixed scalar efficacies in [0, 1]. `ppe_efficacy` is always required (PPE may
-  ## apply in any run); the ETU / general-hospital quarantine efficacies are only
-  ## needed when the post-admission quarantine efficacy is derived (i.e. when
-  ## `hospital_quarantine_efficacy` is not supplied directly). These efficacies are
-  ## deliberately scalar-only: the time-varying response enters through the coverage
-  ## levers (`ppe_coverage_hcw`, `prop_etu`), not the efficacies. The ETU and
-  ## general-hospital efficacies are independently togglable; no ordering between
-  ## them is enforced.
+  ## Fixed scalar efficacies in [0, 1]. The time-varying response enters through the
+  ## coverage levers (`ppe_coverage_hcw`, `prop_etu`), not the efficacies, which are
+  ## deliberately scalar-only. The ETU and general-hospital efficacies are
+  ## independently togglable; no ordering between them is enforced.
   validate_scalar_probability <- function(param, param_name) {
     if (!is.numeric(param) ||
         length(param) != 1L ||
@@ -186,11 +172,9 @@ branching_process_main <- function(
   }
 
   validate_scalar_probability(ppe_efficacy, "ppe_efficacy")
-  if (!has_direct_hospital_efficacy) {
-    validate_scalar_probability(etu_efficacy, "etu_efficacy")
-    validate_scalar_probability(general_hospital_quarantine_efficacy,
-                                "general_hospital_quarantine_efficacy")
-  }
+  validate_scalar_probability(etu_efficacy, "etu_efficacy")
+  validate_scalar_probability(general_hospital_quarantine_efficacy,
+                              "general_hospital_quarantine_efficacy")
 
   if (!is.logical(obv_pep_enabled) || length(obv_pep_enabled) != 1L || is.na(obv_pep_enabled)) {
     stop("`obv_pep_enabled` must be a single logical value.", call. = FALSE)
@@ -232,7 +216,6 @@ branching_process_main <- function(
     p_unsafe_funeral_comm_genPop  = p_unsafe_funeral_comm_genPop,
     p_unsafe_funeral_hosp_genPop  = p_unsafe_funeral_hosp_genPop,
     ppe_coverage_hcw              = ppe_coverage_hcw,
-    hospital_quarantine_efficacy  = hospital_quarantine_efficacy,
     prop_etu                      = prop_etu,
     obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence
@@ -420,9 +403,9 @@ branching_process_main <- function(
     ## directly. Those functions know the candidate transmission times, so they can
     ## resolve PPE coverage and post-admission hospital quarantine/ETU efficacy at the
     ## actual absolute calendar time of each candidate hospital exposure. PPE thinning
-    ## is ppe_coverage_hcw(t) * ppe_efficacy; hospital quarantine efficacy can be
-    ## supplied directly, or calculated inside the offspring functions as a
-    ## prop_etu(t)-weighted mixture of etu_efficacy and general_hospital_quarantine_efficacy.
+    ## is ppe_coverage_hcw(t) * ppe_efficacy; hospital quarantine efficacy is
+    ## calculated inside the offspring functions as a prop_etu(t)-weighted mixture
+    ## of etu_efficacy and general_hospital_quarantine_efficacy.
 
     if (parent_info$class == "genPop") {
       offspring_community_healthcare_df <- offspring_function_genPop(parent_info = parent_info,
@@ -430,7 +413,6 @@ branching_process_main <- function(
                                                                      overdisp_offspring_genPop = overdisp_offspring_genPop,
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
-                                                                     hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                      prop_etu = prop_etu,
                                                                      etu_efficacy = etu_efficacy,
                                                                      general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
@@ -458,7 +440,6 @@ branching_process_main <- function(
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
                                                                   ppe_coverage_hcw = ppe_coverage_hcw,
                                                                   ppe_efficacy = ppe_efficacy,
-                                                                  hospital_quarantine_efficacy = hospital_quarantine_efficacy,
                                                                   prop_etu = prop_etu,
                                                                   etu_efficacy = etu_efficacy,
                                                                   general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,

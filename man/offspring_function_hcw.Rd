@@ -13,7 +13,6 @@ offspring_function_hcw(
   prob_hospital_cond_hcw_preAdm = NULL,
   ppe_coverage_hcw = NULL,
   ppe_efficacy = NULL,
-  hospital_quarantine_efficacy = NULL,
   prop_etu = NULL,
   etu_efficacy = NULL,
   general_hospital_quarantine_efficacy = NULL,
@@ -61,23 +60,16 @@ absolute calendar time of each candidate hospital transmission event in which PP
 conditional on the HCW having it. Shared by the source and receiver PPE layers; combined with
 \code{ppe_coverage_hcw} as a single per-event thinning probability \code{ppe_coverage_hcw(t) * ppe_efficacy}.}
 
-\item{hospital_quarantine_efficacy}{Optional numeric in \code{[0,1]} or function(t). Direct
-effective post-admission hospital quarantine efficacy at reducing post-admission hospital
-transmission. If supplied, this is used directly and resolved at the absolute calendar time
-of each candidate post-admission hospital infection, overriding the derived formula. If
-\code{NULL}, efficacy is calculated from \code{prop_etu}, \code{etu_efficacy}, and
-\code{general_hospital_quarantine_efficacy}.}
-
 \item{prop_etu}{Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases managed
-in ETU/ETC care at time \code{t} (the time-varying "coverage" lever for hospital quarantine);
-used when \code{hospital_quarantine_efficacy = NULL}.}
+in ETU/ETC care at time \code{t} (the time-varying "coverage" lever for hospital quarantine).
+The post-admission hospital quarantine efficacy is derived as the prop_etu(t)-weighted mixture
+\code{prop_etu(t) * etu_efficacy + (1 - prop_etu(t)) * general_hospital_quarantine_efficacy}.}
 
 \item{etu_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Post-admission quarantine efficacy
-for cases managed in ETU/ETC care; used when \code{hospital_quarantine_efficacy = NULL}.}
+for cases managed in ETU/ETC care.}
 
 \item{general_hospital_quarantine_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Post-admission
-quarantine efficacy for cases managed in general (non-ETU) hospital care; used when
-\code{hospital_quarantine_efficacy = NULL}.}
+quarantine efficacy for cases managed in general (non-ETU) hospital care.}
 
 \item{obv_pep_enabled}{Logical scalar. If TRUE, applies an OBV PEP infection-prevention
 gate around the Swiss-cheese thinning step. The gate composes multiplicatively with the
@@ -133,7 +125,6 @@ Hospital keep-probability is therefore
 \eqn{(1 - \mathrm{ppe\_cov}(t)\,\mathrm{ppe\_eff} \cdot \mathbb{1}[\text{pre-admission}]) (1 - \mathrm{ppe\_cov}(t)\,\mathrm{ppe\_eff} \cdot \mathbb{1}[\text{HCW recipient}]) (1 - \mathrm{hq}(t) \cdot \mathbb{1}[\text{post-admission}])},
 where each PPE layer thins by coverage times conditional efficacy. Time-varying inputs are
 resolved at the absolute calendar time of each candidate hospital transmission event.
-Post-admission hospital quarantine efficacy can either be supplied directly or calculated
-internally as a \code{prop_etu(t)}-weighted mixture of the (fixed) ETU and general-hospital
-quarantine efficacies.
+The post-admission hospital quarantine efficacy is calculated internally as a
+\code{prop_etu(t)}-weighted mixture of the (fixed) ETU and general-hospital quarantine efficacies.
 }

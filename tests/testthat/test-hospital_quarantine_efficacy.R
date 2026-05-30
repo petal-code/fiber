@@ -1,7 +1,7 @@
 ## Tests for the post-admission hospital-quarantine efficacy formulation.
 ##
-## When `hospital_quarantine_efficacy` is not supplied directly, the efficacy is
-## derived as a prop_etu(t)-weighted mixture of two fixed scalar efficacies:
+## The efficacy is always derived as a prop_etu(t)-weighted mixture of two fixed
+## scalar efficacies:
 ##
 ##   hospital_quarantine_efficacy(t) = prop_etu(t) * etu_efficacy
 ##                                   + (1 - prop_etu(t)) * general_hospital_quarantine_efficacy
@@ -9,10 +9,11 @@
 ## The only time-variation enters through prop_etu(t); both efficacies are fixed
 ## scalars and are independently togglable (no ordering between them is enforced).
 ##
-## The mixture is pinned by comparing the derived path against the equivalent
-## direct `hospital_quarantine_efficacy` scalar. Neither path consumes RNG when
-## resolving the efficacy, so equal effective efficacy under a fixed seed gives
-## bit-identical draws.
+## The mixture is pinned without any direct override: a Monte-Carlo check ties the
+## absolute value to the realised hospital-survival fraction, and a set of
+## equal-effective-efficacy / boundary equivalences pin the linear weights. None of
+## these paths consume RNG when resolving the efficacy, so equal effective efficacy
+## under a fixed seed gives bit-identical draws.
 
 hq_make_parent <- function(time_infection_absolute = 0,
                            time_to_hospitalisation = 0.001,
@@ -62,55 +63,47 @@ hq_run <- function(seed, ...) {
   )
 }
 
-test_that("derived ETU/general mixture equals the equivalent direct scalar (prop_etu = 0.5)", {
-  ## 0.5 * 0.8 + 0.5 * 0.4 = 0.6
-  res_derived <- hq_run(
-    seed = 100,
-    prop_etu = 0.5,
-    etu_efficacy = 0.8,
-    general_hospital_quarantine_efficacy = 0.4
-  )
-  res_direct <- hq_run(seed = 100, hospital_quarantine_efficacy = 0.6)
-
-  expect_identical(res_derived$infection_location, res_direct$infection_location)
-  expect_identical(res_derived$time_infection_relative, res_direct$time_infection_relative)
+test_that("realised hospital survival matches the prop_etu mixture (Monte Carlo)", {
+  ## Under matched seeds the hospital-candidate set is identical (the efficacy is
+  ## resolved deterministically), so the survival fraction with hq = 0.6 should be
+  ## (1 - 0.6) = 0.4 of the no-quarantine total.
+  hosp_total <- function(...) {
+    sum(vapply(1:150,
+               function(s) sum(hq_run(seed = s, ...)$infection_location == "hospital"),
+               numeric(1)))
+  }
+  total_no_quar <- hosp_total(prop_etu = 1,   etu_efficacy = 0,   general_hospital_quarantine_efficacy = 0)    # hq = 0
+  total_hq06    <- hosp_total(prop_etu = 0.5, etu_efficacy = 0.8, general_hospital_quarantine_efficacy = 0.4)  # hq = 0.6
+  expect_equal(total_hq06 / total_no_quar, 0.4, tolerance = 0.03)
 })
 
-test_that("prop_etu = 1 reduces the mixture to the ETU efficacy", {
-  res_derived <- hq_run(
-    seed = 7,
-    prop_etu = 1,
-    etu_efficacy = 0.8,
-    general_hospital_quarantine_efficacy = 0.4
-  )
-  res_direct <- hq_run(seed = 7, hospital_quarantine_efficacy = 0.8)
-  expect_identical(res_derived$time_infection_relative, res_direct$time_infection_relative)
+test_that("parameterisations with equal effective efficacy give identical draws", {
+  ## both yield hq = 0.6: 0.5*0.8 + 0.5*0.4 = 0.6 and 1*0.6 + 0*0.6 = 0.6
+  a <- hq_run(seed = 11, prop_etu = 0.5, etu_efficacy = 0.8, general_hospital_quarantine_efficacy = 0.4)
+  b <- hq_run(seed = 11, prop_etu = 1,   etu_efficacy = 0.6, general_hospital_quarantine_efficacy = 0.6)
+  expect_identical(a$infection_location, b$infection_location)
+  expect_identical(a$time_infection_relative, b$time_infection_relative)
 })
 
-test_that("prop_etu = 0 reduces the mixture to the general-hospital efficacy", {
-  res_derived <- hq_run(
-    seed = 7,
-    prop_etu = 0,
-    etu_efficacy = 0.8,
-    general_hospital_quarantine_efficacy = 0.4
-  )
-  res_direct <- hq_run(seed = 7, hospital_quarantine_efficacy = 0.4)
-  expect_identical(res_derived$time_infection_relative, res_direct$time_infection_relative)
+test_that("prop_etu = 1 makes the result independent of general_hospital_quarantine_efficacy", {
+  r1 <- hq_run(seed = 5, prop_etu = 1, etu_efficacy = 0.8, general_hospital_quarantine_efficacy = 0.4)
+  r2 <- hq_run(seed = 5, prop_etu = 1, etu_efficacy = 0.8, general_hospital_quarantine_efficacy = 0.9)
+  expect_identical(r1$infection_location, r2$infection_location)
+  expect_identical(r1$time_infection_relative, r2$time_infection_relative)
+})
+
+test_that("prop_etu = 0 makes the result independent of etu_efficacy", {
+  r1 <- hq_run(seed = 5, prop_etu = 0, etu_efficacy = 0.8, general_hospital_quarantine_efficacy = 0.4)
+  r2 <- hq_run(seed = 5, prop_etu = 0, etu_efficacy = 0.1, general_hospital_quarantine_efficacy = 0.4)
+  expect_identical(r1$infection_location, r2$infection_location)
+  expect_identical(r1$time_infection_relative, r2$time_infection_relative)
 })
 
 test_that("a constant function(t) prop_etu reproduces the scalar mixture", {
-  res_scalar <- hq_run(
-    seed = 42,
-    prop_etu = 0.3,
-    etu_efficacy = 0.9,
-    general_hospital_quarantine_efficacy = 0.2
-  )
-  res_fn <- hq_run(
-    seed = 42,
-    prop_etu = function(t) 0.3,
-    etu_efficacy = 0.9,
-    general_hospital_quarantine_efficacy = 0.2
-  )
+  res_scalar <- hq_run(seed = 42, prop_etu = 0.3,
+                       etu_efficacy = 0.9, general_hospital_quarantine_efficacy = 0.2)
+  res_fn     <- hq_run(seed = 42, prop_etu = function(t) 0.3,
+                       etu_efficacy = 0.9, general_hospital_quarantine_efficacy = 0.2)
   expect_identical(res_scalar$time_infection_relative, res_fn$time_infection_relative)
   expect_identical(res_scalar$class, res_fn$class)
 })
@@ -120,12 +113,8 @@ test_that("higher ETU coverage yields stronger quarantine when etu_efficacy > ge
   ## hospital events. Compare expected survivors across many seeds.
   surv <- function(prop_etu_val) {
     vapply(1:40, function(s) {
-      r <- hq_run(
-        seed = s,
-        prop_etu = prop_etu_val,
-        etu_efficacy = 0.9,
-        general_hospital_quarantine_efficacy = 0.1
-      )
+      r <- hq_run(seed = s, prop_etu = prop_etu_val,
+                  etu_efficacy = 0.9, general_hospital_quarantine_efficacy = 0.1)
       sum(r$infection_location == "hospital")
     }, numeric(1))
   }
@@ -134,28 +123,24 @@ test_that("higher ETU coverage yields stronger quarantine when etu_efficacy > ge
 
 ## --- Validation -----------------------------------------------------------
 
-test_that("derived path rejects incomplete inputs (missing general efficacy)", {
+test_that("offspring function rejects incomplete inputs (missing general efficacy)", {
   expect_error(
     hq_run(seed = 1, prop_etu = 0.5, etu_efficacy = 0.8),
     "general_hospital_quarantine_efficacy"
   )
 })
 
-test_that("derived path rejects an out-of-range etu_efficacy", {
+test_that("offspring function rejects an out-of-range etu_efficacy", {
   expect_error(
-    hq_run(
-      seed = 1,
-      prop_etu = 0.5,
-      etu_efficacy = 1.5,
-      general_hospital_quarantine_efficacy = 0.4
-    ),
+    hq_run(seed = 1, prop_etu = 0.5, etu_efficacy = 1.5,
+           general_hospital_quarantine_efficacy = 0.4),
     "etu_efficacy"
   )
 })
 
 test_that("branching_process_main errors when derived inputs are incomplete", {
-  ## End-to-end: the top-level entry point requires either a direct efficacy or
-  ## the full derived set (prop_etu + etu_efficacy + general_*).
+  ## End-to-end: the top-level entry point requires the full derived set
+  ## (prop_etu + etu_efficacy + general_*); there is no direct override.
   expect_error(
     branching_process_main(
       mn_offspring_genPop           = 1.5,

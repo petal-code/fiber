@@ -36,7 +36,6 @@ branching_process_main(
   prob_hospital_cond_hcw_preAdm = NULL,
   ppe_coverage_hcw = NULL,
   ppe_efficacy = NULL,
-  hospital_quarantine_efficacy = NULL,
   prop_etu = NULL,
   etu_efficacy = NULL,
   general_hospital_quarantine_efficacy = NULL,

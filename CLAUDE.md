@@ -73,9 +73,7 @@ literature and varies the efficacies.
   hospital. The post-admission quarantine efficacy is the mixture
   `prop_etu(t)·etu_efficacy + (1 − prop_etu(t))·general_hospital_quarantine_efficacy`,
   where `etu_efficacy` and `general_hospital_quarantine_efficacy` are fixed,
-  independently-togglable scalars (no ordering enforced). A direct
-  `hospital_quarantine_efficacy` scalar/function(t) can still be supplied to
-  override the mixture.
+  independently-togglable scalars (no ordering enforced).
 - **PPE/IPC for HCWs** (reduces pre-admission hospital transmission, plus
   receiver-PPE for HCW recipients in hospital). Each PPE layer thins by
   `ppe_coverage_hcw(t) · ppe_efficacy`, with `ppe_coverage_hcw` the time-varying
