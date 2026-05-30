@@ -19,8 +19,11 @@
 #' supplied for backwards compatibility.
 #'
 #' @param parent_info One-row data.frame/list containing parent infection, hospitalisation and outcome times.
-#' @param mn_offspring_genPop Positive numeric. Mean of the Negative Binomial offspring distribution
-#'   for genPop parents (\code{rnbinom(mu = ..., size = ...)}).
+#' @param mn_offspring_genPop Positive numeric or function(t). Mean of the Negative Binomial offspring
+#'   distribution for genPop parents (\code{rnbinom(mu = ..., size = ...)}). May be supplied as a single
+#'   positive scalar or as a function of absolute calendar time (e.g. built with
+#'   \code{\link{make_time_varying}}); when time-varying it is resolved at the parent's absolute
+#'   infection time.
 #' @param overdisp_offspring_genPop Positive numeric. Negative Binomial \code{size} (overdispersion)
 #'   for genPop parents.
 #' @param Tg_shape_genPop Positive numeric. Shape of the Gamma generation-time distribution
@@ -71,7 +74,7 @@ offspring_function_genPop <- function(
   parent_info,
 
   ## Parameters of the offspring and generation time distributions for general population (genPop)
-  mn_offspring_genPop = NULL,               # mean of the offspring distribution for general population
+  mn_offspring_genPop = NULL,               # scalar or function(t): mean offspring distribution for genPop (resolved at parent infection time)
   overdisp_offspring_genPop = NULL,         # overdispersion of the offspring distribution for general population
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
@@ -113,6 +116,17 @@ offspring_function_genPop <- function(
   validate_probability_scalar <- function(param, param_name) {
     if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0 || param > 1) {
       stop(sprintf("`%s` must be a single numeric in [0, 1].", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  validate_positive_or_time_varying <- function(param, param_name) {
+    if (is.function(param)) {
+      return(invisible(NULL))
+    }
+    if (is.null(param) || !is.numeric(param) || length(param) != 1L || is.na(param) || param <= 0) {
+      stop(sprintf("`%s` must be a function(t) or a single positive numeric value.", param_name),
            call. = FALSE)
     }
     invisible(NULL)
@@ -196,13 +210,15 @@ offspring_function_genPop <- function(
     }
   }
 
-  ## Parameter checks (positivity / bounds)
-  for (nm in c("mn_offspring_genPop", "overdisp_offspring_genPop", "Tg_shape_genPop", "Tg_rate_genPop")) {
+  ## Parameter checks (positivity / bounds). mn_offspring_genPop is handled
+  ## separately because it may be a scalar OR a function(t); the others are scalars.
+  for (nm in c("overdisp_offspring_genPop", "Tg_shape_genPop", "Tg_rate_genPop")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val <= 0) {
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
     }
   }
+  validate_positive_or_time_varying(mn_offspring_genPop, "mn_offspring_genPop")
   for (nm in c("prob_hcw_cond_genPop_comm", "prob_hcw_cond_genPop_hospital")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1) {
@@ -222,8 +238,12 @@ offspring_function_genPop <- function(
   ## Generating offspring, offspring infection times, offspring infection locations & offspring classes
   ########################################################################################################
 
-  # Step 1: Draw from offspring distribution to produce raw number of offspring
-  num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_genPop, size = overdisp_offspring_genPop)
+  # Step 1: Draw from offspring distribution to produce raw number of offspring.
+  #         mn_offspring_genPop may be time-varying; resolve it once at the parent's
+  #         absolute infection time so the whole brood shares the parent's clock.
+  mn_offspring_genPop_t <- resolve_positive_time_varying(
+    mn_offspring_genPop, parent_time_infection_absolute, "mn_offspring_genPop")
+  num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_genPop_t, size = overdisp_offspring_genPop)
 
   if (num_offspring_raw == 0L) {
     return(empty_offspring_dataframe())

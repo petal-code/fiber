@@ -27,8 +27,11 @@
 #' ETU efficacy.
 #'
 #' @param parent_info One-row data.frame/list containing parent infection, hospitalisation and outcome times.
-#' @param mn_offspring_hcw Positive numeric. Mean of the Negative Binomial offspring distribution
-#'   for HCW parents (\code{rnbinom(mu = ..., size = ...)}).
+#' @param mn_offspring_hcw Positive numeric or function(t). Mean of the Negative Binomial offspring
+#'   distribution for HCW parents (\code{rnbinom(mu = ..., size = ...)}). May be supplied as a single
+#'   positive scalar or as a function of absolute calendar time (e.g. built with
+#'   \code{\link{make_time_varying}}); when time-varying it is resolved at the parent's absolute
+#'   infection time.
 #' @param overdisp_offspring_hcw Positive numeric. Negative Binomial \code{size} (overdispersion)
 #'   for HCW parents.
 #' @param Tg_shape_hcw Positive numeric. Shape of the Gamma generation-time distribution
@@ -83,7 +86,7 @@ offspring_function_hcw <- function(
   parent_info,
 
   ## Parameters of the offspring and generation time distributions for HCWs
-  mn_offspring_hcw = NULL,                  # mean of the offspring distribution for HCWs
+  mn_offspring_hcw = NULL,                  # scalar or function(t): mean offspring distribution for HCWs (resolved at parent infection time)
   overdisp_offspring_hcw = NULL,            # overdispersion of the offspring distribution for HCWs
   Tg_shape_hcw = NULL,                      # gamma shape parameter for Tg distribution for HCWs
   Tg_rate_hcw = NULL,                       # gamma rate parameter for Tg distribution for HCWs
@@ -127,6 +130,17 @@ offspring_function_hcw <- function(
   validate_probability_scalar <- function(param, param_name) {
     if (!is.numeric(param) || length(param) != 1L || is.na(param) || param < 0 || param > 1) {
       stop(sprintf("`%s` must be a single numeric in [0, 1].", param_name),
+           call. = FALSE)
+    }
+    invisible(NULL)
+  }
+
+  validate_positive_or_time_varying <- function(param, param_name) {
+    if (is.function(param)) {
+      return(invisible(NULL))
+    }
+    if (is.null(param) || !is.numeric(param) || length(param) != 1L || is.na(param) || param <= 0) {
+      stop(sprintf("`%s` must be a function(t) or a single positive numeric value.", param_name),
            call. = FALSE)
     }
     invisible(NULL)
@@ -210,13 +224,15 @@ offspring_function_hcw <- function(
     }
   }
 
-  ## Parameter checks (positivity / bounds)
-  for (nm in c("mn_offspring_hcw", "overdisp_offspring_hcw", "Tg_shape_hcw", "Tg_rate_hcw")) {
+  ## Parameter checks (positivity / bounds). mn_offspring_hcw is handled separately
+  ## because it may be a scalar OR a function(t); the others are scalars.
+  for (nm in c("overdisp_offspring_hcw", "Tg_shape_hcw", "Tg_rate_hcw")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val <= 0) {
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
     }
   }
+  validate_positive_or_time_varying(mn_offspring_hcw, "mn_offspring_hcw")
   for (nm in c("prob_hospital_cond_hcw_preAdm", "prob_hcw_cond_hcw_comm", "prob_hcw_cond_hcw_hospital")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || length(val) != 1L || !is.numeric(val) || is.na(val) || val < 0 || val > 1) {
@@ -236,8 +252,12 @@ offspring_function_hcw <- function(
   ## Generating offspring, offspring infection times, offspring infection locations & offspring classes
   ########################################################################################################
 
-  # Step 1: Draw from offspring distribution to produce raw number of offspring
-  num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_hcw, size = overdisp_offspring_hcw)
+  # Step 1: Draw from offspring distribution to produce raw number of offspring.
+  #         mn_offspring_hcw may be time-varying; resolve it once at the parent's
+  #         absolute infection time so the whole brood shares the parent's clock.
+  mn_offspring_hcw_t <- resolve_positive_time_varying(
+    mn_offspring_hcw, parent_time_infection_absolute, "mn_offspring_hcw")
+  num_offspring_raw <- rnbinom(n = 1, mu = mn_offspring_hcw_t, size = overdisp_offspring_hcw)
 
   if (num_offspring_raw == 0L) {
     return(empty_offspring_dataframe())

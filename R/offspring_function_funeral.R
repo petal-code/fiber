@@ -31,8 +31,11 @@
 #' @param p_unsafe_funeral_hosp_genPop Numeric between 0 and 1. Probability that a **hospital** death of a genPop leads
 #'   to an unsafe funeral (may be small but non-zero for completeness).
 #'
-#' @param mn_offspring_funeral Positive numeric. Mean of NB distribution for number
-#'   of offspring at an unsafe funeral.
+#' @param mn_offspring_funeral Positive numeric or function(t). Mean of the NB distribution for the
+#'   number of offspring at an unsafe funeral. May be supplied as a single positive scalar or as a
+#'   function of absolute calendar time (e.g. built with \code{\link{make_time_varying}}); when
+#'   time-varying it is resolved at the parent's absolute death (outcome) time, since the funeral
+#'   occurs then rather than at the parent's infection time.
 #' @param overdisp_offspring_funeral Positive numeric. Negative Binomial size (overdispersion).
 #'
 #' @param Tg_shape_funeral Positive numeric. Shape of Gamma delay distribution
@@ -69,7 +72,7 @@ offspring_function_funeral <- function(
   parent_info,
 
   ## Offspring distribution for unsafe funeral event
-  mn_offspring_funeral = NULL, # mean number of offspring at unsafe funeral
+  mn_offspring_funeral = NULL, # scalar or function(t): mean offspring at unsafe funeral (resolved at parent death time)
   overdisp_offspring_funeral = NULL, # overdispersion of the above number of offspring
 
   ## Timing of funeral infections (delay after outcome)
@@ -134,12 +137,23 @@ offspring_function_funeral <- function(
       stop("If parent is NOT hospitalised, `parent_time_to_hospitalisation` must be NA.", call. = FALSE)
   }
 
-  # Other positive parameters
-  for (nm in c("mn_offspring_funeral", "overdisp_offspring_funeral",
+  # Other positive parameters (scalars). mn_offspring_funeral is handled
+  # separately below because it may be a scalar OR a function(t).
+  for (nm in c("overdisp_offspring_funeral",
                "Tg_shape_funeral", "Tg_rate_funeral")) {
     val <- get(nm, inherits = FALSE)
     if (is.null(val) || !is.numeric(val) || length(val) != 1L || is.na(val) || val <= 0)
       stop(sprintf("`%s` must be a single positive numeric value.", nm), call. = FALSE)
+  }
+
+  # mn_offspring_funeral may be a single positive scalar or a function(t) of
+  # absolute calendar time (resolved at the parent's death time, see Step 3).
+  if (!is.function(mn_offspring_funeral)) {
+    if (is.null(mn_offspring_funeral) || !is.numeric(mn_offspring_funeral) ||
+        length(mn_offspring_funeral) != 1L || is.na(mn_offspring_funeral) ||
+        mn_offspring_funeral <= 0)
+      stop("`mn_offspring_funeral` must be a function(t) or a single positive numeric value.",
+           call. = FALSE)
   }
 
   ## Keep safe funeral efficacy as a scalar here. The probability that a funeral
@@ -180,10 +194,16 @@ offspring_function_funeral <- function(
   ## Produce funeral offspring
   #########################################################################################
 
-  # Step 3: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one)
+  # Step 3: Draw raw number of infections from NB at the funeral (assuming initially an unsafe one).
+  #         mn_offspring_funeral may be time-varying. The funeral is a discrete event at the parent's
+  #         death, so resolve transmissibility at the parent's absolute death (outcome) time rather
+  #         than at their infection time.
+  parent_death_time_absolute <- parent_info$time_infection_absolute + parent_time_to_outcome
+  mn_offspring_funeral_t <- resolve_positive_time_varying(
+    mn_offspring_funeral, parent_death_time_absolute, "mn_offspring_funeral")
   num_offspring_raw <- rnbinom(
     n    = 1,
-    mu   = mn_offspring_funeral,
+    mu   = mn_offspring_funeral_t,
     size = overdisp_offspring_funeral
   )
 

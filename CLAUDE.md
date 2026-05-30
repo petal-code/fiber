@@ -49,6 +49,12 @@ Each infected person generates offspring based on their class:
 
 All use Negative Binomial distribution for offspring count and truncated Gamma for infection timing.
 
+The NB mean (`mn_offspring_genPop`, `mn_offspring_hcw`, `mn_offspring_funeral`) may be a scalar or a
+time-varying `function(t)` of absolute calendar time (e.g. via `make_time_varying()`). It is resolved
+to a single value per parent immediately before the NB draw: genPop/HCW at the **parent's infection
+time**, funeral at the **parent's death (outcome) time** (since the funeral occurs then). A constant
+function reproduces the equivalent scalar run bit-for-bit under a fixed seed (no extra RNG draws).
+
 ### Key Support Functions
 
 - **`complete_offspring_info()`** (`R/complete_offspring_info.R`) - Fills in offspring details: symptomatic status, hospitalization, death/recovery outcomes, delay times
@@ -93,9 +99,11 @@ Cases are tracked by where infection occurred: `community`, `hospital`, or `fune
 Uses testthat (edition 3). Test files go in `tests/testthat/`. Current suites:
 - `test-make_time_varying.R`
 - `test-time_varying_hospitalisation.R`
+- `test-time_varying_transmissibility.R`
 - `test-ppe_thinning.R`
 - `test-conditional_cfr.R`
 - `test-obv_pep.R`
+- `test-compute_reproduction_number.R`
 
 ## Notes
 

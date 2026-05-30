@@ -71,8 +71,8 @@ Top-level entry point for fiber's filovirus branching-process model.
 Iteratively generates offspring (community, hospital, and funeral
 transmission) from active cases until the outbreak ends or the configured
 final-size cap is reached. Time-varying scenario inputs (probabilities,
-delay factors, IPC / ETU coverage) can be passed as scalars or functions
-of time produced by \code{\link[=make_time_varying]{make_time_varying()}}.
+delay factors, IPC / ETU coverage, and mean-offspring transmissibility) can
+be passed as scalars or functions of time produced by \code{\link[=make_time_varying]{make_time_varying()}}.
 }
 \details{
 Per-argument documentation is pending; see the inline comments in
