@@ -81,6 +81,20 @@ check_positive_on_grid <- function(param, grid, param_name) {
   invisible(NULL)
 }
 
+## Resolve a strictly-positive parameter (scalar or function(t)) at the supplied
+## time(s), asserting every resolved value is finite and > 0. Used for
+## transmissibility-style parameters (e.g. the mn_offspring_* means) that may be
+## supplied either as a single positive scalar or as a function of absolute
+## calendar time. The interpolation itself is delegated to resolve_time_varying()
+## so callers stay scenario-agnostic.
+resolve_positive_time_varying <- function(param, t, param_name = "parameter") {
+  value <- resolve_time_varying(param = param, t = t, param_name = param_name)
+  if (any(!is.finite(value)) || any(value <= 0)) {
+    stop(sprintf("`%s` must resolve to positive value(s).", param_name), call. = FALSE)
+  }
+  value
+}
+
 ## Sanity-check a non-negative parameter (scalar or function) by sampling it on
 ## `grid` and confirming every resolved value is finite and >= 0. Unlike
 ## check_positive_on_grid this allows the boundary value zero (relevant for

@@ -20,8 +20,8 @@
 #' Iteratively generates offspring (community, hospital, and funeral
 #' transmission) from active cases until the outbreak ends or the configured
 #' final-size cap is reached. Time-varying scenario inputs (probabilities,
-#' delay factors, IPC / ETU coverage) can be passed as scalars or functions
-#' of time produced by [make_time_varying()].
+#' delay factors, IPC / ETU coverage, and mean-offspring transmissibility) can
+#' be passed as scalars or functions of time produced by [make_time_varying()].
 #'
 #' Per-argument documentation is pending; see the inline comments in
 #' `R/branching_process_main.R` for the current notes on each parameter.
@@ -33,15 +33,15 @@
 branching_process_main <- function(
 
   ## Transmission
-  mn_offspring_genPop = NULL,               # mean of the offspring distribution for genPop
+  mn_offspring_genPop = NULL,               # scalar or function(t): mean offspring distribution for genPop (resolved at parent infection time)
   overdisp_offspring_genPop = NULL,         # overdispersion of the offspring distribution for genPop
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
-  mn_offspring_hcw = NULL,                  # mean of the offspring distribution for HCWs
+  mn_offspring_hcw = NULL,                  # scalar or function(t): mean offspring distribution for HCWs (resolved at parent infection time)
   overdisp_offspring_hcw = NULL,            # overdispersion of the offspring distribution for HCWs
   Tg_shape_hcw = NULL,                      # gamma shape parameter for Tg distribution for HCWs
   Tg_rate_hcw = NULL,                       # gamma rate parameter for Tg distribution for HCWs
-  mn_offspring_funeral = NULL,              # mean number of offspring at unsafe funeral
+  mn_offspring_funeral = NULL,              # scalar or function(t): mean offspring at unsafe funeral (resolved at parent death time)
   overdisp_offspring_funeral = NULL,        # overdispersion of the above number of offspring
   Tg_shape_funeral = NULL,                  # gamma shape parameter for Tg distribution at funerals ### have high shape, high rate to get low variance ##
   Tg_rate_funeral = NULL,                   # gamma rate parameter for Tg distribution at funerals
@@ -223,7 +223,21 @@ branching_process_main <- function(
     obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence
   )
-  sanity_grid <- build_sanity_grid(sanity_params)
+  ## Build the sampling grid from ALL time-varying inputs -- the probabilities
+  ## above plus the positive-valued curves below -- so the upfront check lands on
+  ## every changepoint, including those of hospitalisation_delay_factor,
+  ## obv_pep_dpc, and the time-varying mean-offspring parameters.
+  grid_inputs <- c(
+    sanity_params,
+    list(
+      hospitalisation_delay_factor = hospitalisation_delay_factor,
+      obv_pep_dpc                  = obv_pep_dpc,
+      mn_offspring_genPop          = mn_offspring_genPop,
+      mn_offspring_hcw             = mn_offspring_hcw,
+      mn_offspring_funeral         = mn_offspring_funeral
+    )
+  )
+  sanity_grid <- build_sanity_grid(grid_inputs)
 
   for (nm in names(sanity_params)) {
     check_probability_on_grid(sanity_params[[nm]], sanity_grid, nm)
@@ -232,6 +246,14 @@ branching_process_main <- function(
   ## hospitalisation_delay_factor is strictly positive (a multiplier), not a probability.
   check_positive_on_grid(hospitalisation_delay_factor, sanity_grid,
                          "hospitalisation_delay_factor")
+
+  ## mn_offspring_* are strictly positive NB means and may be scalars or functions
+  ## of absolute calendar time. They are resolved inside the offspring functions
+  ## (genPop/HCW at the parent's infection time, funeral at the parent's death
+  ## time); here we only sanity-check positivity across the simulation horizon.
+  check_positive_on_grid(mn_offspring_genPop,  sanity_grid, "mn_offspring_genPop")
+  check_positive_on_grid(mn_offspring_hcw,     sanity_grid, "mn_offspring_hcw")
+  check_positive_on_grid(mn_offspring_funeral, sanity_grid, "mn_offspring_funeral")
 
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
   check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")

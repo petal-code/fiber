@@ -23,8 +23,11 @@ offspring_function_funeral(
 )
 }
 \arguments{
-\item{mn_offspring_funeral}{Positive numeric. Mean of NB distribution for number
-of offspring at an unsafe funeral.}
+\item{mn_offspring_funeral}{Positive numeric or function(t). Mean of the NB distribution for the
+number of offspring at an unsafe funeral. May be supplied as a single positive scalar or as a
+function of absolute calendar time (e.g. built with \code{\link{make_time_varying}}); when
+time-varying it is resolved at the parent's absolute death (outcome) time, since the funeral
+occurs then rather than at the parent's infection time.}
 
 \item{overdisp_offspring_funeral}{Positive numeric. Negative Binomial size (overdispersion).}
 
