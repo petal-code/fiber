@@ -24,9 +24,9 @@ offspring_function_funeral(
 }
 \arguments{
 \item{parent_info}{One-row data.frame/list of parent attributes. Funeral transmission reads
-\code{hospitalisation}, \code{time_hospitalisation_relative}, \code{time_outcome_relative},
-\code{outcome} (did the parent die?), \code{class} ("genPop"/"HCW"), \code{funeral_safety}
-("safe"/"unsafe") and \code{time_infection_absolute}.}
+\code{hospitalisation}, \code{time_hospitalisation_relative}, \code{time_outcome_relative}, \code{outcome}
+(did the parent die?), \code{class} ("genPop"/"HCW"), \code{funeral_safety} ("safe"/"unsafe") and
+\code{time_infection_absolute}.}
 
 \item{mn_offspring_funeral}{Positive numeric or function(t). Mean of the NB distribution for the
 number of offspring at an unsafe funeral. May be supplied as a single positive scalar or as a
