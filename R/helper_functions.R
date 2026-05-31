@@ -198,7 +198,19 @@ empty_obv_pep_num_treated <- function() {
   )
 }
 
+## Cache for the (constant) empty offspring data frame. Building a 0-row,
+## 7-column data.frame per call is material in profiles: it is hit on every
+## transmission route that yields no offspring (e.g. the funeral route for every
+## parent who survives). The frame and its zero-valued obv_pep counter attribute
+## never vary, and data frames are copy-on-modify, so handing back a shared
+## cached object is safe -- callers only rbind it or read its attribute.
+.empty_offspring_df_cache <- new.env(parent = emptyenv())
+
 empty_offspring_dataframe <- function() {
+  cached <- .empty_offspring_df_cache$value
+  if (!is.null(cached)) {
+    return(cached)
+  }
   out <- data.frame(
     infection_location      = character(0),
     time_infection_relative = numeric(0),
@@ -210,6 +222,7 @@ empty_offspring_dataframe <- function() {
     stringsAsFactors = FALSE
   )
   attr(out, "obv_pep_num_treated") <- empty_obv_pep_num_treated()
+  .empty_offspring_df_cache$value <- out
   out
 }
 
