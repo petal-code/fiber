@@ -379,19 +379,95 @@ branching_process_main <- function(
     stringsAsFactors = FALSE
   )
 
+  ## --- Columnar working store -------------------------------------------------
+  ## The hot loop appends offspring by writing into pre-allocated *standalone*
+  ## column vectors (refcount 1 => in-place `[<-`) rather than the row-block
+  ## assignment `tdf[rows, ] <- df`, which copied the whole frame on every
+  ## iteration (the dominant cost + GC churn at scale; see dev/profile.html).
+  ## Columns are pulled out *after* seeding so they inherit the exact
+  ## post-seeding column types (e.g. `parent` is character because the seed
+  ## block assigns NA_character_ into the integer column; `generation` is double
+  ## because the seed assigns `1`). Reassembled into a data.frame once after the
+  ## loop, the result is identical -- values, types and order -- to the old path.
+  v_id                            <- tdf$id
+  v_class                         <- tdf$class
+  v_infection_location            <- tdf$infection_location
+  v_parent                        <- tdf$parent
+  v_generation                    <- tdf$generation
+  v_time_infection_relative       <- tdf$time_infection_relative
+  v_time_infection_absolute       <- tdf$time_infection_absolute
+  v_incubation_period             <- tdf$incubation_period
+  v_symptomatic                   <- tdf$symptomatic
+  v_time_symptom_onset_relative   <- tdf$time_symptom_onset_relative
+  v_time_symptom_onset_absolute   <- tdf$time_symptom_onset_absolute
+  v_hospitalisation               <- tdf$hospitalisation
+  v_time_hospitalisation_relative <- tdf$time_hospitalisation_relative
+  v_time_hospitalisation_absolute <- tdf$time_hospitalisation_absolute
+  v_outcome                       <- tdf$outcome
+  v_outcome_location              <- tdf$outcome_location
+  v_time_outcome_relative         <- tdf$time_outcome_relative
+  v_time_outcome_absolute         <- tdf$time_outcome_absolute
+  v_funeral_safety                <- tdf$funeral_safety
+  v_obv_pep_eligible              <- tdf$obv_pep_eligible
+  v_obv_pep_received              <- tdf$obv_pep_received
+  v_obv_pep_adherent              <- tdf$obv_pep_adherent
+  v_obv_pep_dpc                   <- tdf$obv_pep_dpc
+  v_n_offspring                   <- tdf$n_offspring
+  v_offspring_generated           <- tdf$offspring_generated
+  rm(tdf)
+  ## Number of filled rows. Rows fill densely from the top (seed block, then one
+  ## contiguous block per parent) and id == row index throughout, so this single
+  ## counter equals both `max(which(!is.na(time_infection_absolute)))` (next free
+  ## row) and `max(id)` -- replacing those per-iteration O(N) scans.
+  n_filled <- seeding_cases
+
   #################################################################################
   ### Step 3: Loop through infections and generate offspring for each of them
   #################################################################################
   ## While we haven't hit the simulation cap size (check_final_size) and any infections exist where we have not yet generated the requisite offspring,
-  ## continue to generate infections
-  while (any(is.na(tdf$n_offspring)) && susc > 0 && nrow(tdf) <= check_final_size) {
+  ## continue to generate infections.
+  ## `n_filled <= check_final_size` is exactly the old `nrow(tdf) <= check_final_size`:
+  ## tdf was pre-allocated to max_cases == check_final_size, so nrow only exceeded
+  ## the cap once an append extended it past max_cases, i.e. once n_filled did.
+  while (any(is.na(v_n_offspring)) && susc > 0 && n_filled <= check_final_size) {
 
     #############################################################################################
     ## Step 1: Get earliest infection not yet expanded to act as a parent, and their attributes
     #############################################################################################
-    parent_time_infection <- min(tdf$time_infection_absolute[!tdf$offspring_generated & !is.na(tdf$time_infection_absolute)])
-    idx <- which(tdf$time_infection_absolute == parent_time_infection & !tdf$offspring_generated)[1]
-    parent_info <- tdf[idx, ]
+    parent_time_infection <- min(v_time_infection_absolute[!v_offspring_generated & !is.na(v_time_infection_absolute)])
+    idx <- which(v_time_infection_absolute == parent_time_infection & !v_offspring_generated)[1]
+    ## Rebuild the single parent row as a 1-row data.frame (the offspring/
+    ## completion functions read it via `parent_info$<field>`). Same columns,
+    ## same types as the old `tdf[idx, ]`; the row label differs (1 vs idx) but
+    ## nothing downstream reads rownames(parent_info).
+    parent_info <- data.frame(
+      id                            = v_id[idx],
+      class                         = v_class[idx],
+      infection_location            = v_infection_location[idx],
+      parent                        = v_parent[idx],
+      generation                    = v_generation[idx],
+      time_infection_relative       = v_time_infection_relative[idx],
+      time_infection_absolute       = v_time_infection_absolute[idx],
+      incubation_period             = v_incubation_period[idx],
+      symptomatic                   = v_symptomatic[idx],
+      time_symptom_onset_relative   = v_time_symptom_onset_relative[idx],
+      time_symptom_onset_absolute   = v_time_symptom_onset_absolute[idx],
+      hospitalisation               = v_hospitalisation[idx],
+      time_hospitalisation_relative = v_time_hospitalisation_relative[idx],
+      time_hospitalisation_absolute = v_time_hospitalisation_absolute[idx],
+      outcome                       = v_outcome[idx],
+      outcome_location              = v_outcome_location[idx],
+      time_outcome_relative         = v_time_outcome_relative[idx],
+      time_outcome_absolute         = v_time_outcome_absolute[idx],
+      funeral_safety                = v_funeral_safety[idx],
+      obv_pep_eligible              = v_obv_pep_eligible[idx],
+      obv_pep_received              = v_obv_pep_received[idx],
+      obv_pep_adherent              = v_obv_pep_adherent[idx],
+      obv_pep_dpc                   = v_obv_pep_dpc[idx],
+      n_offspring                   = v_n_offspring[idx],
+      offspring_generated           = v_offspring_generated[idx],
+      stringsAsFactors              = FALSE
+    )
     if (!(parent_info$class %in% c("genPop", "HCW"))) {
       stop("error with parent class")
     }
@@ -505,10 +581,12 @@ branching_process_main <- function(
     ### Step 4: Complete offspring information based on parent attributes and timings; and update parent information
     ##          (e.g. num_offspring, offspring_generated == TRUE etc)
     #################################################################################################################
-    ## Completing offspring information if there are any
-    if (nrow(rbind(offspring_community_healthcare_df, offspring_funeral_df)) > 0) {
+    ## Completing offspring information if there are any. Combine the two
+    ## offspring sources once (previously rbind'd twice -- guard + call).
+    combined_offspring_df <- rbind(offspring_community_healthcare_df, offspring_funeral_df)
+    if (nrow(combined_offspring_df) > 0) {
       complete_offspring_df <- complete_offspring_info(parent_info = parent_info,
-                                                       offspring_dataframe = rbind(offspring_community_healthcare_df, offspring_funeral_df),
+                                                       offspring_dataframe = combined_offspring_df,
                                                        prob_symptomatic = prob_symptomatic,
                                                        prob_hospitalised_hcw = prob_hospitalised_hcw,
                                                        prob_hospitalised_genPop = prob_hospitalised_genPop,
@@ -525,30 +603,90 @@ branching_process_main <- function(
                                                        hospitalisation_to_recovery = hospitalisation_to_recovery,
                                                        onset_to_death = onset_to_death,
                                                        onset_to_recovery = onset_to_recovery)
-      tdf$n_offspring[idx] <- nrow(complete_offspring_df)
+      n_new <- nrow(complete_offspring_df)
+      v_n_offspring[idx] <- n_new
     } else {
-      complete_offspring_df <- tdf[0, , drop = FALSE]
-      tdf$n_offspring[idx] <- 0
+      n_new <- 0L
+      v_n_offspring[idx] <- 0   # double literal preserved (old `tdf$n_offspring[idx] <- 0`
+                                # promotes the integer column to double on first 0-offspring parent)
     }
-    tdf$offspring_generated[idx] <- TRUE
+    v_offspring_generated[idx] <- TRUE
 
     #################################################################################################################
-    ### Step 5: Adding the complete offspring dataframe (complete_offspring_df) to the main dataframe (tdf)
+    ### Step 5: Adding the complete offspring dataframe (complete_offspring_df) to the main column vectors
     #################################################################################################################
-    ## If offspring exist, append them
-    if (nrow(complete_offspring_df) > 0) {
-      current_max_row <- max(which(!is.na(tdf$time_infection_absolute)))
-      current_max_id <- max(tdf$id[which(!is.na(tdf$time_infection_absolute))])
-      complete_offspring_df$id <- (current_max_id + 1):(current_max_id + nrow(complete_offspring_df))
-      tdf[(current_max_row + 1):(current_max_row + nrow(complete_offspring_df)), ] <- complete_offspring_df[, names(tdf), drop = FALSE]
+    ## If offspring exist, append them by writing into the pre-allocated standalone
+    ## column vectors in place. The next free block is (n_filled + 1):(n_filled + n_new)
+    ## and id == row index, so this replaces both the row-block data.frame copy and the
+    ## per-iteration max(which(!is.na(...))) / max(id) scans.
+    if (n_new > 0) {
+      rows <- (n_filled + 1L):(n_filled + n_new)
+      v_id[rows]                            <- rows
+      v_class[rows]                         <- complete_offspring_df$class
+      v_infection_location[rows]            <- complete_offspring_df$infection_location
+      v_parent[rows]                        <- complete_offspring_df$parent
+      v_generation[rows]                    <- complete_offspring_df$generation
+      v_time_infection_relative[rows]       <- complete_offspring_df$time_infection_relative
+      v_time_infection_absolute[rows]       <- complete_offspring_df$time_infection_absolute
+      v_incubation_period[rows]             <- complete_offspring_df$incubation_period
+      v_symptomatic[rows]                   <- complete_offspring_df$symptomatic
+      v_time_symptom_onset_relative[rows]   <- complete_offspring_df$time_symptom_onset_relative
+      v_time_symptom_onset_absolute[rows]   <- complete_offspring_df$time_symptom_onset_absolute
+      v_hospitalisation[rows]               <- complete_offspring_df$hospitalisation
+      v_time_hospitalisation_relative[rows] <- complete_offspring_df$time_hospitalisation_relative
+      v_time_hospitalisation_absolute[rows] <- complete_offspring_df$time_hospitalisation_absolute
+      v_outcome[rows]                       <- complete_offspring_df$outcome
+      v_outcome_location[rows]              <- complete_offspring_df$outcome_location
+      v_time_outcome_relative[rows]         <- complete_offspring_df$time_outcome_relative
+      v_time_outcome_absolute[rows]         <- complete_offspring_df$time_outcome_absolute
+      v_funeral_safety[rows]                <- complete_offspring_df$funeral_safety
+      v_obv_pep_eligible[rows]              <- complete_offspring_df$obv_pep_eligible
+      v_obv_pep_received[rows]              <- complete_offspring_df$obv_pep_received
+      v_obv_pep_adherent[rows]              <- complete_offspring_df$obv_pep_adherent
+      v_obv_pep_dpc[rows]                   <- complete_offspring_df$obv_pep_dpc
+      v_n_offspring[rows]                   <- complete_offspring_df$n_offspring
+      v_offspring_generated[rows]           <- complete_offspring_df$offspring_generated
+      n_filled <- n_filled + n_new
     }
     ## Deplete susceptibles
-    susc <- susc - tdf$n_offspring[idx]
+    susc <- susc - v_n_offspring[idx]
   }
 
   ############################################################################################
   ### Final tidy of dataframe and then outputting it
   ############################################################################################
+  ## Reassemble the frame once from the column vectors (column order matches the
+  ## Step-1 pre-allocation exactly). Includes the unfilled pre-allocated tail
+  ## (NA time_infection_absolute), which order() sends to the bottom -- identical
+  ## to the old behaviour, which never truncated the pre-allocated frame.
+  tdf <- data.frame(
+    id                            = v_id,
+    class                         = v_class,
+    infection_location            = v_infection_location,
+    parent                        = v_parent,
+    generation                    = v_generation,
+    time_infection_relative       = v_time_infection_relative,
+    time_infection_absolute       = v_time_infection_absolute,
+    incubation_period             = v_incubation_period,
+    symptomatic                   = v_symptomatic,
+    time_symptom_onset_relative   = v_time_symptom_onset_relative,
+    time_symptom_onset_absolute   = v_time_symptom_onset_absolute,
+    hospitalisation               = v_hospitalisation,
+    time_hospitalisation_relative = v_time_hospitalisation_relative,
+    time_hospitalisation_absolute = v_time_hospitalisation_absolute,
+    outcome                       = v_outcome,
+    outcome_location              = v_outcome_location,
+    time_outcome_relative         = v_time_outcome_relative,
+    time_outcome_absolute         = v_time_outcome_absolute,
+    funeral_safety                = v_funeral_safety,
+    obv_pep_eligible              = v_obv_pep_eligible,
+    obv_pep_received              = v_obv_pep_received,
+    obv_pep_adherent              = v_obv_pep_adherent,
+    obv_pep_dpc                   = v_obv_pep_dpc,
+    n_offspring                   = v_n_offspring,
+    offspring_generated           = v_offspring_generated,
+    stringsAsFactors              = FALSE
+  )
   tdf <- tdf[order(tdf$time_infection_absolute, tdf$id), ]
   rownames(tdf) <- NULL
 
