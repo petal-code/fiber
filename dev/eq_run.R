@@ -30,20 +30,27 @@ source("dev/profile_run.R")   # provides run_sim() with a full, valid parameter 
 ##   * obv_on                   -> populates obv_pep_* columns in appended rows
 ##   * time_varying             -> resolve-at-time transmissibility path
 ##   * susc_limited             -> loop exit via `susc > 0` rather than the cap
+##
+## Caps are kept small (<=2000) deliberately: equivalence is scale-invariant
+## (the append / n_filled counter / over-cap extension logic is identical at any
+## size), so small caps exercise every path while keeping the whole harness to
+## ~1-2 minutes instead of tens of minutes.
 scenarios <- list(
-  base         = list(),
-  takeoff_2000 = list(check_final_size = 2000L, mn_offspring_genPop = 3,
+  base         = list(check_final_size = 1500L),
+  takeoff_1500 = list(check_final_size = 1500L, mn_offspring_genPop = 3,
                       mn_offspring_hcw = 3, mn_offspring_funeral = 3),
   cap_200      = list(check_final_size = 200L,  mn_offspring_genPop = 3,
                       mn_offspring_hcw = 3, mn_offspring_funeral = 3),
-  obv_on       = list(obv_pep_enabled = TRUE, obv_pep_coverage = 0.8,
-                      mn_offspring_genPop = 2, mn_offspring_hcw = 2,
-                      mn_offspring_funeral = 2),
-  time_varying = list(mn_offspring_genPop = make_time_varying(c(0, 30, 80),
+  obv_on       = list(check_final_size = 1500L, obv_pep_enabled = TRUE,
+                      obv_pep_coverage = 0.8, mn_offspring_genPop = 2,
+                      mn_offspring_hcw = 2, mn_offspring_funeral = 2),
+  time_varying = list(check_final_size = 1500L,
+                      mn_offspring_genPop = make_time_varying(c(0, 30, 80),
                                                               c(1, 3, 0.5)),
                       mn_offspring_hcw = 2, mn_offspring_funeral = 2),
-  susc_limited = list(population = 4000, mn_offspring_genPop = 3,
-                      mn_offspring_hcw = 3, mn_offspring_funeral = 3)
+  susc_limited = list(check_final_size = 2000L, population = 1500,
+                      mn_offspring_genPop = 3, mn_offspring_hcw = 3,
+                      mn_offspring_funeral = 3)
 )
 seeds <- 1:6
 
