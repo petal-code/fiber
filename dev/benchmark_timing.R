@@ -25,14 +25,17 @@ source("dev/profile_run.R")   # provides run_sim(): a full, valid parameter set
                               # dev/ and was not touched by the optimisation).
 
 ## --- knobs ------------------------------------------------------------------
-OFFSPRING_MEAN <- 3     # baseline NB mean for all three routes. The community
+## All overridable from the shell without editing this file, e.g.
+##   BENCH_OFFSPRING_MEAN=2 bash dev/benchmark_compare.sh
+OFFSPRING_MEAN <- as.numeric(Sys.getenv("BENCH_OFFSPRING_MEAN", "3"))
+                        # baseline NB mean for all three routes. The community
                         # genPop route is NOT thinned by any control measure, so
                         # this is what drives takeoff. 3 => effective R ~2-2.5 =>
                         # the cap is hit reliably. Dial toward 1.5 for a more
                         # realistic R0, but expect occasional fizzles (watch the
-                        # "hit cap?" column).
-CAP   <- 30000L
-REPS  <- 5L
+                        # "hit cap?" column) and more iterations (=> slower).
+CAP   <- as.integer(Sys.getenv("BENCH_CAP",  "30000"))
+REPS  <- as.integer(Sys.getenv("BENCH_REPS", "5"))
 SEEDS <- seq_len(REPS)   # 1..REPS; reproducible and identical across versions.
 
 ## All control measures ON / at full strength. (PPE/ETU/OBV target the hospital
