@@ -110,8 +110,10 @@ obv_bpm_args <- function(...) {
 }
 
 ## A high-transmission, low-thinning, HCW-at-hospital-dominant scenario with full
-## OBV prevention -- engineered so that the (default) HCW-at-hospital target reliably
-## yields a non-trivial number of prevented infections in a 200-case outbreak.
+## OBV prevention -- engineered so that the (default) HCW-at-hospital target
+## yields prevented infections. Outbreak size is still stochastic, so callers that
+## need prevented > 0 should drive it via run_with_prevention() below rather than
+## trusting any single seed.
 obv_full_prevention_args <- function(...) {
   obv_bpm_args(
     obv_pep_enabled               = TRUE,
@@ -128,6 +130,9 @@ obv_full_prevention_args <- function(...) {
     prob_hospitalised_genPop      = 0.9,
     prob_hcw_cond_genPop_hospital = 0.9,
     prob_hcw_cond_hcw_hospital    = 0.9,
+    ## Seed the outbreak heavily so it reliably establishes (a 3-case seed can
+    ## fizzle before any HCW-at-hospital transmission occurs).
+    seeding_cases                 = 20,
     ...
   )
 }
@@ -167,26 +172,36 @@ test_that("extract_obv_prevented_info returns a typed empty frame when nothing i
 
 ## --- branching_process_main prevented-death counter --------------------
 
+## Outbreak size -- hence the number of prevented infections -- is highly
+## seed-dependent (a chain can fizzle before any HCW-at-hospital transmission).
+## To keep the CFR invariants below non-trivial (prevented > 0) without pinning a
+## fragile single seed, scan seeds and use the first run that actually prevents
+## something. Productive seeds are common for this scenario, so this terminates
+## almost immediately; if none prevents, fail loudly rather than asserting a
+## vacuous 0 == 0.
+run_with_prevention <- function(arg_fun, seeds = 1:40) {
+  for (sd in seeds) {
+    res <- do.call(branching_process_main, arg_fun(sd))
+    s <- summarise_output(res$tdf, sim_info = res$sim_info)
+    if (s$n_obv_pep_prevented > 0) return(s)
+  }
+  stop("no seed in 1:40 produced any prevented infections; check the scenario")
+}
+
 test_that("prevented_deaths equals prevented when everyone is symptomatic and CFR = 1", {
-  ## With prob_symptomatic = 1 and both CFRs = 1, every infection that would have
-  ## occurred dies -- so every *prevented* infection is a prevented death,
-  ## regardless of the (stochastic) outbreak realisation.
-  res <- do.call(branching_process_main,
-                 obv_full_prevention_args(prob_symptomatic = 1,
-                                          prob_death_comm = 1,
-                                          prob_death_hosp = 1,
-                                          seed = 11L))
-  s <- summarise_output(res$tdf, sim_info = res$sim_info)
-  expect_gt(s$n_obv_pep_prevented, 0)                       # scenario is non-trivial
+  ## prob_symptomatic = 1 and both CFRs = 1 => every infection that would have
+  ## occurred dies, so every *prevented* infection is a prevented death, whatever
+  ## the (stochastic) outbreak realisation.
+  s <- run_with_prevention(function(sd)
+    obv_full_prevention_args(prob_symptomatic = 1, prob_death_comm = 1,
+                             prob_death_hosp = 1, seed = sd))
+  expect_gt(s$n_obv_pep_prevented, 0)
   expect_equal(s$n_obv_pep_prevented_deaths, s$n_obv_pep_prevented)
 })
 
 test_that("prevented_deaths is 0 when CFR = 0 even though infections are prevented", {
-  res <- do.call(branching_process_main,
-                 obv_full_prevention_args(prob_death_comm = 0,
-                                          prob_death_hosp = 0,
-                                          seed = 11L))
-  s <- summarise_output(res$tdf, sim_info = res$sim_info)
+  s <- run_with_prevention(function(sd)
+    obv_full_prevention_args(prob_death_comm = 0, prob_death_hosp = 0, seed = sd))
   expect_gt(s$n_obv_pep_prevented, 0)
   expect_equal(s$n_obv_pep_prevented_deaths, 0)
 })
