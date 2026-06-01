@@ -106,6 +106,8 @@ Seven gate counters surface in `summarise_output()`:
 
 Plus three tdf-based cohort counters of HCW cases who became cases despite being in the eligible / treated / adherent cohort (`n_obv_pep_eligible_cases`, `n_obv_pep_treated_cases`, `n_obv_pep_breakthroughs`). Only `n_obv_pep_breakthroughs` (received AND adhered AND still infected) is a clinical breakthrough.
 
+Plus a deferred counterfactual counter `n_obv_pep_prevented_deaths` (≤ `n_obv_pep_prevented`): the subset of prevented infections that *would have died* had they occurred. The infections OBV blocks are removed before `complete_offspring_info()` resolves any outcome, so their would-be death status is constructed after the simulation loop by replaying the stashed prevented infections through the **same** outcome model as realised cases (`complete_offspring_info()`: symptomatic → potential hospitalisation → community CFR → hospital second-chance) against a zero-time dummy parent. Like `n_obv_pep_prevented`, this is a *direct* count (the prevented index infections only, excluding their averted onward chains), and is therefore a **lower bound** on the total deaths the programme averts. The replay runs after the transmission tree is finalised and is skipped entirely when nothing was prevented, so it never perturbs the simulated trajectory's RNG stream — letting deaths averted by OBV be read off a single run instead of differencing a separate (stochastically divergent) no-OBV run.
+
 Default efficacy curve `obv_pep_efficacy_from_dpc()` is NHP-derived (E0 = 0.82 at dpc=0, decays to 0 at dpc ≥ 10).
 
 ### Infection Locations

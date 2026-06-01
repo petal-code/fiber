@@ -182,19 +182,60 @@ obv_pep_efficacy_from_dpc <- function(dpc,
   pmin(1, pmax(0, eff))
 }
 
-## OBV PEP per-call accumulator. Seven aggregate counters surface both
+## OBV PEP accumulator. The first seven aggregate counters surface both
 ## pre-thinning (the "treat-all-contacts" policy denominator) and post-thinning
 ## (the "treat-only-PPE-failures" policy denominator) views of treatment, plus
-## the count of infections actually prevented by adherent OBV.
+## the count of infections actually prevented by adherent OBV. These seven are
+## produced per offspring-function call by apply_obv_pep_gate() and summed.
+##
+## `prevented_deaths` is different in kind: it is NOT a gate counter. It is the
+## subset of `prevented` infections that WOULD have died had they occurred,
+## resolved once after the simulation loop by replaying them through the same
+## outcome model as realised cases (see branching_process_main). It stays 0L
+## here and is overwritten at the end of the run. Drawing it post-loop keeps the
+## simulated trajectory's RNG stream untouched (see that deferral for why).
 empty_obv_pep_num_treated <- function() {
   list(
-    pre_eligible  = 0L,   # # candidates eligible BEFORE PPE/quarantine thinning
-    pre_treated   = 0L,   # # of pre_eligible who received OBV (Bernoulli(coverage))
-    pre_adherent  = 0L,   # # of pre_treated who adhered (Bernoulli(adherence))
-    post_eligible = 0L,   # # pre_eligible candidates that survived thinning (i.e. would-be cases)
-    post_treated  = 0L,   # # pre_treated candidates that survived thinning
-    post_adherent = 0L,   # # pre_adherent candidates that survived thinning
-    prevented     = 0L    # # post_adherent whose infection was prevented by efficacy(dpc)
+    pre_eligible     = 0L,   # # candidates eligible BEFORE PPE/quarantine thinning
+    pre_treated      = 0L,   # # of pre_eligible who received OBV (Bernoulli(coverage))
+    pre_adherent     = 0L,   # # of pre_treated who adhered (Bernoulli(adherence))
+    post_eligible    = 0L,   # # pre_eligible candidates that survived thinning (i.e. would-be cases)
+    post_treated     = 0L,   # # pre_treated candidates that survived thinning
+    post_adherent    = 0L,   # # pre_adherent candidates that survived thinning
+    prevented        = 0L,   # # post_adherent whose infection was prevented by efficacy(dpc)
+    prevented_deaths = 0L    # # of `prevented` infections that would have died (deferred counterfactual)
+  )
+}
+
+## Empty (0-row) container for the per-call snapshot of infections the OBV gate
+## prevented. Carries just enough to resolve each one's counterfactual death
+## later: class (drives hospitalisation/CFR), infection location, and the
+## absolute infection time (the calendar clock for time-varying parameters).
+empty_obv_prevented_info <- function() {
+  data.frame(
+    class                   = character(0),
+    infection_location      = character(0),
+    time_infection_absolute = numeric(0),
+    stringsAsFactors        = FALSE
+  )
+}
+
+## Extract the candidate infections the OBV gate prevented (those that survived
+## PPE/quarantine thinning but were blocked by the efficacy draw) from an
+## offspring function's local state. `keep_mask` is apply_obv_pep_gate()'s
+## `keep` vector, aligned to `which(keep_infection)`; its FALSE entries are the
+## prevented kept-candidates. Reads already-drawn values only -- consumes no RNG
+## -- so callers can stash the result and resolve would-be deaths after the loop.
+extract_obv_prevented_info <- function(pre_thinning, keep_infection, keep_mask) {
+  prevented_idx <- which(keep_infection)[!keep_mask]
+  if (length(prevented_idx) == 0L) {
+    return(empty_obv_prevented_info())
+  }
+  data.frame(
+    class                   = pre_thinning$offspring_class[prevented_idx],
+    infection_location      = pre_thinning$infection_location[prevented_idx],
+    time_infection_absolute = pre_thinning$infection_time_absolute[prevented_idx],
+    stringsAsFactors        = FALSE
   )
 }
 
@@ -210,6 +251,7 @@ empty_offspring_dataframe <- function() {
     stringsAsFactors = FALSE
   )
   attr(out, "obv_pep_num_treated") <- empty_obv_pep_num_treated()
+  attr(out, "obv_pep_prevented_info") <- empty_obv_prevented_info()
   out
 }
 
@@ -312,8 +354,10 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #'       \code{obv_pep_received}, \code{obv_pep_adherent}, and \code{obv_pep_dpc}.
 #'       Non-recipients have \code{obv_pep_dpc = NA_real_} and the three booleans FALSE.
 #'       Filter by \code{obv_pep_received == TRUE} before using \code{obv_pep_dpc}.}
-#'     \item{\code{num_treated}}{Named list of seven integer counters
-#'       (see \code{empty_obv_pep_num_treated()}).}
+#'     \item{\code{num_treated}}{Named list of integer counters
+#'       (see \code{empty_obv_pep_num_treated()}). The gate populates the seven
+#'       treatment/prevention counters; the \code{prevented_deaths} slot is left
+#'       at 0L for the caller to fill in after the run.}
 #'   }
 #' @noRd
 apply_obv_pep_gate <- function(pre_thinning,
