@@ -13,23 +13,10 @@
 #' Each realised offspring is then assigned a class (\code{"HCW"} or \code{"genPop"})
 #' using \code{prob_hcw_cond_funeral}.
 #'
-#' @param parent_hospitalised Logical scalar. Whether the parent was hospitalised.
-#' @param parent_time_to_hospitalisation Numeric scalar
-#'   Time from infection to admission; NA if not hospitalised.
-#' @param parent_time_to_outcome Numeric scalar.
-#'   Time from infection to outcome (death/recovery), have this already.
-#' @param parent_died Logical scalar. Whether the parent died (TRUE) or recovered (FALSE).
-#'
-#' @param parent_class Character scalar, either "genPop" or "HCW". Class of the parent.
-#'
-#' @param p_unsafe_funeral_comm_hcw Numeric between 0 and 1. Probability that a **community** death of a HCW leads
-#'   to an unsafe funeral.
-#' @param p_unsafe_funeral_hosp_hcw Numeric between 0 and 1. Probability that a **hospital** death of a HCW  leads
-#'   to an unsafe funeral (may be small but non-zero for completeness).
-#' @param p_unsafe_funeral_comm_genPop Numeric between 0 and 1. Probability that a **community** death of a genPop leads
-#'   to an unsafe funeral.
-#' @param p_unsafe_funeral_hosp_genPop Numeric between 0 and 1. Probability that a **hospital** death of a genPop leads
-#'   to an unsafe funeral (may be small but non-zero for completeness).
+#' @param parent_info One-row data.frame/list of parent attributes. Funeral transmission reads
+#'   `hospitalisation`, `time_hospitalisation_relative`, `time_outcome_relative`, `outcome`
+#'   (did the parent die?), `class` ("genPop"/"HCW"), `funeral_safety` ("safe"/"unsafe") and
+#'   `time_infection_absolute`.
 #'
 #' @param mn_offspring_funeral Positive numeric or function(t). Mean of the NB distribution for the
 #'   number of offspring at an unsafe funeral. May be supplied as a single positive scalar or as a
@@ -277,5 +264,9 @@ offspring_function_funeral <- function(
                              obv_metadata,
                              stringsAsFactors = FALSE)
   attr(offspring_df, "obv_pep_num_treated") <- obv_gate$num_treated
+  ## Stash the infections OBV prevented (no RNG drawn) so the caller can resolve
+  ## their counterfactual would-be deaths after the simulation loop.
+  attr(offspring_df, "obv_pep_prevented_info") <-
+    extract_obv_prevented_info(pre_thinning, keep_infection, final_local)
   return(offspring_df)
 }

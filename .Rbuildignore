@@ -1,2 +1,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.github$
+^CLAUDE\.md$
+^codecov\.yml$
+^LICENSE$
