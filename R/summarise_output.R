@@ -137,6 +137,12 @@ summarise_output <- function(
   ##                 |                 |--- "Policy B: treat only PPE failures" denominator + treated
   ##                 |--- subset of pre_eligible that also survived PPE/quarantine thinning
   ##
+  ## `n_obv_pep_prevented_deaths` <= `n_obv_pep_prevented`: the subset of prevented
+  ## infections that would have died had they occurred. It is a deferred within-run
+  ## counterfactual (resolved post-loop via the same outcome model as realised cases;
+  ## see branching_process_main), so deaths averted by OBV can be read off a single run
+  ## rather than differencing a separate no-OBV run (which diverges stochastically).
+  ##
   ## tdf-based cohort counters: realised HCW cases in the linelist who were
   ## eligible / treated / adherent (i.e. OBV did not prevent their infection).
   ## Only `n_obv_pep_breakthroughs` (= realised cases who received AND adhered
@@ -159,6 +165,12 @@ summarise_output <- function(
   n_obv_pep_post_treated  <- if (!is.null(obv_treated)) obv_treated$post_treated  else NA_real_
   n_obv_pep_post_adherent <- if (!is.null(obv_treated)) obv_treated$post_adherent else NA_real_
   n_obv_pep_prevented     <- if (!is.null(obv_treated)) obv_treated$prevented     else NA_real_
+  ## `prevented_deaths` is the deferred counterfactual: the subset of `prevented`
+  ## infections that would have died had they occurred (see branching_process_main).
+  ## Guard the field lookup so tdfs whose obv_pep_num_treated predates it stay NA.
+  n_obv_pep_prevented_deaths <- if (!is.null(obv_treated) && !is.null(obv_treated$prevented_deaths)) {
+    obv_treated$prevented_deaths
+  } else NA_real_
 
   if (!is.null(tdf$obv_pep_eligible)) {
     n_obv_pep_eligible_cases <- sum(tdf$obv_pep_eligible & subset_vector, na.rm = TRUE)
@@ -222,6 +234,8 @@ summarise_output <- function(
     n_obv_pep_post_treated            = n_obv_pep_post_treated,
     n_obv_pep_post_adherent           = n_obv_pep_post_adherent,
     n_obv_pep_prevented               = n_obv_pep_prevented,
+    ## Deferred counterfactual: would-be deaths among the `prevented` infections.
+    n_obv_pep_prevented_deaths        = n_obv_pep_prevented_deaths,
 
     ## OBV PEP tdf-based cohort counters (HCW cases who became cases despite
     ## being in the eligible / treated / adherent cohort). Only

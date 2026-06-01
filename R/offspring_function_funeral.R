@@ -264,5 +264,9 @@ offspring_function_funeral <- function(
                              obv_metadata,
                              stringsAsFactors = FALSE)
   attr(offspring_df, "obv_pep_num_treated") <- obv_gate$num_treated
+  ## Stash the infections OBV prevented (no RNG drawn) so the caller can resolve
+  ## their counterfactual would-be deaths after the simulation loop.
+  attr(offspring_df, "obv_pep_prevented_info") <-
+    extract_obv_prevented_info(pre_thinning, keep_infection, final_local)
   return(offspring_df)
 }

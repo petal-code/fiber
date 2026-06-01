@@ -296,8 +296,13 @@ branching_process_main <- function(
             call. = FALSE)
   }
 
-  ## OBV PEP per-call accumulator: 7 fields, see empty_obv_pep_num_treated().
+  ## OBV PEP per-call accumulator: 7 gate counters, see empty_obv_pep_num_treated().
   obv_num_treated <- empty_obv_pep_num_treated()
+  ## Collected per-call snapshots of infections OBV prevented (no RNG drawn in
+  ## the loop). Their counterfactual would-be deaths are resolved once, after the
+  ## loop, to populate obv_num_treated$prevented_deaths without perturbing the
+  ## simulated trajectory's RNG stream.
+  obv_prevented_info_list <- list()
   ##################################################################
   ### Step 1b: Upfront sanity checks on time-varying parameters
   ###
@@ -567,6 +572,10 @@ branching_process_main <- function(
     obv_num_treated$post_treated  <- obv_num_treated$post_treated  + step$post_treated
     obv_num_treated$post_adherent <- obv_num_treated$post_adherent + step$post_adherent
     obv_num_treated$prevented     <- obv_num_treated$prevented     + step$prevented
+    pinfo <- attr(offspring_community_healthcare_df, "obv_pep_prevented_info", exact = TRUE)
+    if (!is.null(pinfo) && nrow(pinfo) > 0) {
+      obv_prevented_info_list[[length(obv_prevented_info_list) + 1L]] <- pinfo
+    }
 
     ## Count HCWs generated and subtract from available pool
     n_hcw_community_healthcare <- sum(offspring_community_healthcare_df$class == "HCW")
@@ -600,6 +609,10 @@ branching_process_main <- function(
     obv_num_treated$post_treated  <- obv_num_treated$post_treated  + step$post_treated
     obv_num_treated$post_adherent <- obv_num_treated$post_adherent + step$post_adherent
     obv_num_treated$prevented     <- obv_num_treated$prevented     + step$prevented
+    pinfo <- attr(offspring_funeral_df, "obv_pep_prevented_info", exact = TRUE)
+    if (!is.null(pinfo) && nrow(pinfo) > 0) {
+      obv_prevented_info_list[[length(obv_prevented_info_list) + 1L]] <- pinfo
+    }
 
     ## Update hcw_available after funeral transmission
     n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
@@ -655,6 +668,65 @@ branching_process_main <- function(
   ############################################################################################
   tdf <- tdf[order(tdf$time_infection_absolute, tdf$id), ]
   rownames(tdf) <- NULL
+
+  #########################################################################################
+  ### Deferred OBV PEP "prevented deaths" counterfactual
+  ###
+  ### For each infection the OBV gate prevented, decide whether it WOULD have died had
+  ### it occurred, by replaying it through the SAME outcome model as realised cases
+  ### (complete_offspring_info: symptomatic -> potential hospitalisation -> community CFR
+  ### -> hospital second-chance). This is a "direct" count -- the would-be death of each
+  ### prevented index infection only -- mirroring `prevented`, which likewise excludes the
+  ### averted onward transmission chains.
+  ###
+  ### Why after the loop: these draws consume RNG, so doing them inline would shift every
+  ### subsequent draw and change the simulated trajectory. Run once the tree is finalised,
+  ### nothing downstream in this call depends on them, and each branching_process_main()
+  ### call re-seeds up front -- so the trajectory and every existing output are byte-for-byte
+  ### identical to a run without this counter. Skipped entirely when nothing was prevented,
+  ### so zero-prevention (incl. obv-disabled) runs draw nothing extra.
+  #########################################################################################
+  if (length(obv_prevented_info_list) > 0) {
+    obv_prevented_info <- do.call(rbind, obv_prevented_info_list)
+    if (nrow(obv_prevented_info) > 0) {
+      ## Carry each prevented infection's absolute infection time as a "relative" time
+      ## against a zero-time dummy parent, so complete_offspring_info's clock
+      ## (parent_abs + relative) resolves time-varying parameters at the true time.
+      prevented_offspring <- data.frame(
+        infection_location      = obv_prevented_info$infection_location,
+        time_infection_relative = obv_prevented_info$time_infection_absolute,
+        class                   = obv_prevented_info$class,
+        stringsAsFactors        = FALSE
+      )
+      dummy_parent <- data.frame(
+        id                      = NA_integer_,
+        generation              = NA_integer_,
+        time_infection_absolute = 0,
+        stringsAsFactors        = FALSE
+      )
+      prevented_completed <- complete_offspring_info(
+        parent_info                  = dummy_parent,
+        offspring_dataframe          = prevented_offspring,
+        prob_symptomatic             = prob_symptomatic,
+        prob_hospitalised_hcw        = prob_hospitalised_hcw,
+        prob_hospitalised_genPop     = prob_hospitalised_genPop,
+        prob_death_comm              = prob_death_comm,
+        prob_death_hosp              = prob_death_hosp,
+        p_unsafe_funeral_comm_hcw    = p_unsafe_funeral_comm_hcw,
+        p_unsafe_funeral_hosp_hcw    = p_unsafe_funeral_hosp_hcw,
+        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+        incubation_period            = incubation_period,
+        onset_to_hospitalisation     = onset_to_hospitalisation,
+        hospitalisation_delay_factor = hospitalisation_delay_factor,
+        hospitalisation_to_death     = hospitalisation_to_death,
+        hospitalisation_to_recovery  = hospitalisation_to_recovery,
+        onset_to_death               = onset_to_death,
+        onset_to_recovery            = onset_to_recovery
+      )
+      obv_num_treated$prevented_deaths <- sum(prevented_completed$outcome, na.rm = TRUE)
+    }
+  }
 
   attr(tdf, "hcw_total") <- hcw_total
   attr(tdf, "hcw_infected") <- hcw_total - hcw_available

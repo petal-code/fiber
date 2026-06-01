@@ -54,6 +54,166 @@ obv_off_args <- function() {
   )
 }
 
+## A full, valid branching_process_main() argument set for end-to-end OBV tests.
+## OBV parameters fall back to the function defaults (disabled) unless overridden
+## via `...`.
+obv_bpm_args <- function(...) {
+  fixed <- function(v) function(n) rep(v, n)
+  defaults <- list(
+    mn_offspring_genPop           = 1.5,
+    overdisp_offspring_genPop     = 0.5,
+    Tg_shape_genPop               = 2,
+    Tg_rate_genPop                = 0.15,
+    mn_offspring_hcw              = 1.5,
+    overdisp_offspring_hcw        = 0.5,
+    Tg_shape_hcw                  = 2,
+    Tg_rate_hcw                   = 0.15,
+    mn_offspring_funeral          = 1.5,
+    overdisp_offspring_funeral    = 0.5,
+    Tg_shape_funeral              = 10,
+    Tg_rate_funeral               = 5,
+    incubation_period             = fixed(5),
+    onset_to_hospitalisation      = fixed(3),
+    onset_to_death                = fixed(7),
+    onset_to_recovery             = fixed(10),
+    hospitalisation_to_death      = fixed(7),
+    hospitalisation_to_recovery   = fixed(10),
+    prob_symptomatic              = 0.9,
+    prob_hospitalised_hcw         = 0.5,
+    prob_hospitalised_genPop      = 0.5,
+    prob_death_comm               = 0.5,
+    prob_death_hosp               = 0.3,
+    prob_hcw_cond_genPop_comm     = 0.01,
+    prob_hcw_cond_genPop_hospital = 0.3,
+    prob_hcw_cond_hcw_comm        = 0.01,
+    prob_hcw_cond_hcw_hospital    = 0.3,
+    prob_hospital_cond_hcw_preAdm = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
+    prop_etu                      = 1,
+    etu_efficacy                  = 0.5,
+    general_hospital_quarantine_efficacy = 0.5,
+    p_unsafe_funeral_comm_hcw     = 0.5,
+    p_unsafe_funeral_hosp_hcw     = 0.2,
+    p_unsafe_funeral_comm_genPop  = 0.5,
+    p_unsafe_funeral_hosp_genPop  = 0.2,
+    safe_funeral_efficacy         = 1.0,
+    prob_hcw_cond_funeral_hcw     = 0.05,
+    prob_hcw_cond_funeral_genPop  = 0.05,
+    population                    = 5000,
+    hcw_per_capita                = 0.02,
+    check_final_size              = 200,
+    seeding_cases                 = 3,
+    seed                          = 1L
+  )
+  utils::modifyList(defaults, list(...))
+}
+
+## A high-transmission, low-thinning, HCW-at-hospital-dominant scenario with full
+## OBV prevention -- engineered so that the (default) HCW-at-hospital target reliably
+## yields a non-trivial number of prevented infections in a 200-case outbreak.
+obv_full_prevention_args <- function(...) {
+  obv_bpm_args(
+    obv_pep_enabled               = TRUE,
+    obv_pep_coverage              = 1,
+    obv_pep_adherence             = 1,
+    obv_pep_dpc                   = 0,
+    obv_pep_efficacy              = 1,
+    ## Remove hospital thinning so eligible exposures reach the gate, and make
+    ## most hospital infections HCWs so they are eligible.
+    ppe_coverage_hcw              = 0,
+    etu_efficacy                  = 0,
+    general_hospital_quarantine_efficacy = 0,
+    prob_hospitalised_hcw         = 0.9,
+    prob_hospitalised_genPop      = 0.9,
+    prob_hcw_cond_genPop_hospital = 0.9,
+    prob_hcw_cond_hcw_hospital    = 0.9,
+    ...
+  )
+}
+
+## --- extract_obv_prevented_info (deterministic, no RNG) ----------------
+
+test_that("extract_obv_prevented_info selects kept-but-blocked candidates", {
+  pre_thinning <- list(
+    infection_location      = c("hospital", "hospital", "community", "hospital", "funeral"),
+    offspring_class         = c("HCW", "HCW", "genPop", "HCW", "genPop"),
+    infection_time_absolute = c(10, 11, 12, 13, 14)
+  )
+  ## Candidate 3 was thinned out upstream; the gate then blocked the 2nd and 4th
+  ## *kept* candidates (i.e. original candidates 2 and 5).
+  keep_infection <- c(TRUE, TRUE, FALSE, TRUE, TRUE)   # which() -> 1, 2, 4, 5
+  keep_mask      <- c(TRUE, FALSE, TRUE, FALSE)        # aligned to kept candidates
+
+  res <- extract_obv_prevented_info(pre_thinning, keep_infection, keep_mask)
+  expect_equal(nrow(res), 2L)
+  expect_equal(res$class, c("HCW", "genPop"))
+  expect_equal(res$infection_location, c("hospital", "funeral"))
+  expect_equal(res$time_infection_absolute, c(11, 14))
+})
+
+test_that("extract_obv_prevented_info returns a typed empty frame when nothing is blocked", {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 3),
+    offspring_class         = rep("HCW", 3),
+    infection_time_absolute = rep(5, 3)
+  )
+  res <- extract_obv_prevented_info(pre_thinning,
+                                    keep_infection = c(TRUE, TRUE, TRUE),
+                                    keep_mask      = c(TRUE, TRUE, TRUE))
+  expect_equal(nrow(res), 0L)
+  expect_named(res, c("class", "infection_location", "time_infection_absolute"))
+})
+
+## --- branching_process_main prevented-death counter --------------------
+
+test_that("prevented_deaths equals prevented when everyone is symptomatic and CFR = 1", {
+  ## With prob_symptomatic = 1 and both CFRs = 1, every infection that would have
+  ## occurred dies -- so every *prevented* infection is a prevented death,
+  ## regardless of the (stochastic) outbreak realisation.
+  res <- do.call(branching_process_main,
+                 obv_full_prevention_args(prob_symptomatic = 1,
+                                          prob_death_comm = 1,
+                                          prob_death_hosp = 1,
+                                          seed = 11L))
+  s <- summarise_output(res$tdf, sim_info = res$sim_info)
+  expect_gt(s$n_obv_pep_prevented, 0)                       # scenario is non-trivial
+  expect_equal(s$n_obv_pep_prevented_deaths, s$n_obv_pep_prevented)
+})
+
+test_that("prevented_deaths is 0 when CFR = 0 even though infections are prevented", {
+  res <- do.call(branching_process_main,
+                 obv_full_prevention_args(prob_death_comm = 0,
+                                          prob_death_hosp = 0,
+                                          seed = 11L))
+  s <- summarise_output(res$tdf, sim_info = res$sim_info)
+  expect_gt(s$n_obv_pep_prevented, 0)
+  expect_equal(s$n_obv_pep_prevented_deaths, 0)
+})
+
+test_that("prevented_deaths is bounded by prevented and reproducible under a fixed seed", {
+  args <- obv_full_prevention_args(seed = 21L)
+  r1 <- do.call(branching_process_main, args)
+  r2 <- do.call(branching_process_main, args)
+  s1 <- summarise_output(r1$tdf, sim_info = r1$sim_info)
+  s2 <- summarise_output(r2$tdf, sim_info = r2$sim_info)
+
+  expect_true(is.finite(s1$n_obv_pep_prevented_deaths))
+  expect_gte(s1$n_obv_pep_prevented_deaths, 0)
+  expect_lte(s1$n_obv_pep_prevented_deaths, s1$n_obv_pep_prevented)
+  ## Deferred draw is reproducible (and, being post-loop, does not perturb the tree).
+  expect_equal(s1$n_obv_pep_prevented_deaths, s2$n_obv_pep_prevented_deaths)
+  expect_equal(s1$n_obv_pep_prevented, s2$n_obv_pep_prevented)
+  expect_equal(r1$tdf, r2$tdf)
+})
+
+test_that("prevented_deaths is 0 when OBV is disabled", {
+  res <- do.call(branching_process_main, obv_bpm_args(obv_pep_enabled = FALSE, seed = 21L))
+  s <- summarise_output(res$tdf, sim_info = res$sim_info)
+  expect_equal(s$n_obv_pep_prevented, 0)
+  expect_equal(s$n_obv_pep_prevented_deaths, 0)
+})
+
 ## --- obv_pep_efficacy_from_dpc boundaries ------------------------------
 
 test_that("obv_pep_efficacy_from_dpc returns E0 at dpc = 0", {
@@ -300,6 +460,8 @@ test_that("summarise_output() exposes the expected OBV PEP field names", {
     "n_obv_pep_post_treated",
     "n_obv_pep_post_adherent",
     "n_obv_pep_prevented",
+    ## deferred counterfactual: would-be deaths among prevented infections
+    "n_obv_pep_prevented_deaths",
     ## three tdf-based cohort counters
     "n_obv_pep_eligible_cases",
     "n_obv_pep_treated_cases",
