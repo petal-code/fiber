@@ -142,6 +142,10 @@ summarise_output <- function(
   ## counterfactual (resolved post-loop via the same outcome model as realised cases;
   ## see branching_process_main), so deaths averted by OBV can be read off a single run
   ## rather than differencing a separate no-OBV run (which diverges stochastically).
+  ## Interpretation: this is a *direct* count -- the would-be death of each prevented
+  ## index infection only -- and so a LOWER BOUND on the total deaths the programme
+  ## averts, excluding deaths in the onward transmission chains those infections would
+  ## have seeded.
   ##
   ## tdf-based cohort counters: realised HCW cases in the linelist who were
   ## eligible / treated / adherent (i.e. OBV did not prevent their infection).
