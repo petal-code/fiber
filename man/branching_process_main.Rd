@@ -225,8 +225,25 @@ yet implemented). Defaults to FALSE.}
 \item{seed}{Optional integer. RNG seed for reproducibility.}
 }
 \value{
-A list with the simulated transmission tree (\verb{$tdf}) and
-auxiliary outputs (final-size flag, generation index, etc.).
+A named list with components:
+\describe{
+\item{\code{tdf}}{The simulated transmission tree: one row per realised
+infection, ordered by absolute infection time. Carries attributes
+\code{hcw_total}, \code{hcw_infected}, \code{hcw_remaining}, and \code{obv_pep_num_treated}.}
+\item{\code{prevented_completed}}{A data frame of the infections the OBV PEP gate
+prevented -- the averted index infections only, not their averted onward
+chains -- each replayed through the same outcome model as realised cases to
+give its counterfactual natural history. \code{time_infection_absolute} is the
+would-be calendar infection time of each averted infection, and \code{outcome}
+its would-be death/recovery status (summing \code{outcome} reproduces
+\code{obv_pep_num_treated$prevented_deaths}). \code{NULL} when the gate prevented
+nothing (including when \code{obv_pep_enabled = FALSE}). The replay uses a
+zero-time dummy parent, so \code{parent} and \code{generation} are \code{NA} and
+\code{time_infection_relative} equals \code{time_infection_absolute}.}
+\item{\code{sim_info}}{Scalar run metadata: \code{population}, \code{hcw_per_capita},
+\code{hcw_total}, \code{seed}, \code{obv_pep_enabled}, and the \code{obv_pep_num_treated}
+counters.}
+}
 }
 \description{
 Top-level entry point for fiber's filovirus branching-process model.
