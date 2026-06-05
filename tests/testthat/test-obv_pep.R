@@ -229,6 +229,53 @@ test_that("prevented_deaths is 0 when OBV is disabled", {
   expect_equal(s$n_obv_pep_prevented_deaths, 0)
 })
 
+## --- branching_process_main prevented_completed output ------------------
+
+## Like run_with_prevention(), but returns the full branching_process_main()
+## result (not just the summary) so the prevented_completed frame can be
+## inspected. Scans seeds for a run that actually prevents something.
+run_res_with_prevention <- function(arg_fun, seeds = 1:40) {
+  for (sd in seeds) {
+    res <- do.call(branching_process_main, arg_fun(sd))
+    if (summarise_output(res$tdf, sim_info = res$sim_info)$n_obv_pep_prevented > 0) {
+      return(res)
+    }
+  }
+  stop("no seed in 1:40 produced any prevented infections; check the scenario")
+}
+
+test_that("prevented_completed surfaces one counterfactual row per prevented infection", {
+  res <- run_res_with_prevention(function(sd) obv_full_prevention_args(seed = sd))
+  pc  <- res$prevented_completed
+  s   <- summarise_output(res$tdf, sim_info = res$sim_info)
+
+  expect_s3_class(pc, "data.frame")
+  ## One row per averted index infection (the direct count, not onward chains).
+  expect_equal(nrow(pc), s$n_obv_pep_prevented)
+  ## The counterfactual infection-time column this output exists to expose.
+  expect_true("time_infection_absolute" %in% names(pc))
+  expect_true(all(is.finite(pc$time_infection_absolute)))
+  ## The full counterfactual natural history is present (replayed outcome model).
+  expect_true(all(c("class", "infection_location", "symptomatic", "hospitalisation",
+                    "outcome", "outcome_location", "time_outcome_absolute") %in% names(pc)))
+  ## Summing the would-be deaths reproduces the deferred prevented_deaths counter.
+  expect_equal(sum(pc$outcome, na.rm = TRUE), s$n_obv_pep_prevented_deaths)
+  ## Zero-time dummy-parent replay artifacts: parent/generation are NA and the
+  ## "relative" infection time equals the absolute one.
+  expect_true(all(is.na(pc$parent)))
+  expect_true(all(is.na(pc$generation)))
+  expect_equal(pc$time_infection_relative, pc$time_infection_absolute)
+
+  ## Surfacing the frame draws no RNG, so it is reproducible under a fixed seed.
+  res2 <- do.call(branching_process_main, obv_full_prevention_args(seed = res$sim_info$seed))
+  expect_equal(res2$prevented_completed, pc)
+})
+
+test_that("prevented_completed is NULL when OBV prevents nothing", {
+  res <- do.call(branching_process_main, obv_bpm_args(obv_pep_enabled = FALSE, seed = 21L))
+  expect_null(res$prevented_completed)
+})
+
 ## --- obv_pep_efficacy_from_dpc boundaries ------------------------------
 
 test_that("obv_pep_efficacy_from_dpc returns E0 at dpc = 0", {

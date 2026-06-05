@@ -130,8 +130,25 @@
 #'   yet implemented). Defaults to FALSE.
 #' @param seed Optional integer. RNG seed for reproducibility.
 #'
-#' @return A list with the simulated transmission tree (`$tdf`) and
-#'   auxiliary outputs (final-size flag, generation index, etc.).
+#' @return A named list with components:
+#'   \describe{
+#'     \item{`tdf`}{The simulated transmission tree: one row per realised
+#'       infection, ordered by absolute infection time. Carries attributes
+#'       `hcw_total`, `hcw_infected`, `hcw_remaining`, and `obv_pep_num_treated`.}
+#'     \item{`prevented_completed`}{A data frame of the infections the OBV PEP gate
+#'       prevented -- the averted index infections only, not their averted onward
+#'       chains -- each replayed through the same outcome model as realised cases to
+#'       give its counterfactual natural history. `time_infection_absolute` is the
+#'       would-be calendar infection time of each averted infection, and `outcome`
+#'       its would-be death/recovery status (summing `outcome` reproduces
+#'       `obv_pep_num_treated$prevented_deaths`). `NULL` when the gate prevented
+#'       nothing (including when `obv_pep_enabled = FALSE`). The replay uses a
+#'       zero-time dummy parent, so `parent` and `generation` are `NA` and
+#'       `time_infection_relative` equals `time_infection_absolute`.}
+#'     \item{`sim_info`}{Scalar run metadata: `population`, `hcw_per_capita`,
+#'       `hcw_total`, `seed`, `obv_pep_enabled`, and the `obv_pep_num_treated`
+#'       counters.}
+#'   }
 #'
 #' @export
 branching_process_main <- function(
@@ -817,6 +834,12 @@ branching_process_main <- function(
   ### prevented index infection only -- mirroring `prevented`, which likewise excludes the
   ### averted onward transmission chains.
   ###
+  ### The completed frame (`prevented_completed`) is also returned in `out` so callers
+  ### can read each averted infection's counterfactual natural history directly --
+  ### notably `time_infection_absolute`, the would-be calendar infection time. It stays
+  ### NULL when nothing was prevented (so a caller can `rbind` it across replicates and
+  ### the empty runs simply drop out).
+  ###
   ### Why after the loop: these draws consume RNG, so doing them inline would shift every
   ### subsequent draw and change the simulated trajectory. Run once the tree is finalised,
   ### nothing downstream in this call depends on them, and each branching_process_main()
@@ -824,6 +847,7 @@ branching_process_main <- function(
   ### identical to a run without this counter. Skipped entirely when nothing was prevented,
   ### so zero-prevention (incl. obv-disabled) runs draw nothing extra.
   #########################################################################################
+  prevented_completed <- NULL
   if (length(obv_prevented_info_list) > 0) {
     obv_prevented_info <- do.call(rbind, obv_prevented_info_list)
     if (nrow(obv_prevented_info) > 0) {
@@ -873,6 +897,10 @@ branching_process_main <- function(
 
   out <- list(
     tdf = tdf,
+    ## Counterfactual completed offspring info for the infections OBV prevented
+    ## (averted index infections only; NULL when nothing was prevented). See the
+    ## deferred-counterfactual block above and the @return docs for column notes.
+    prevented_completed = prevented_completed,
     sim_info = list(
       population          = population,
       hcw_per_capita      = hcw_per_capita,
