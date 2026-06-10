@@ -192,6 +192,46 @@ summarise_output <- function(
   } else NA_real_
 
   ##--------------------------------------------------------------
+  ## 5b. Ring vaccination summary
+  ##
+  ## Gate counters (accumulated across the run; include AVERTED contacts, which
+  ## never appear as tdf rows) are nested per the chain:
+  ##   traced >= vaccinated >= protected >= prevented
+  ## and are UNIQUE-CONTACT counts among realised would-be offspring -- a
+  ## lower-bound "dose proxy" (a branching process without a susceptible pool
+  ## cannot represent vaccinating contacts who would never have been infected).
+  ##
+  ## `n_ring_vax_prevented_deaths` <= `n_ring_vax_prevented`: the deferred
+  ## within-run counterfactual subset of prevented infections that would have died
+  ## (resolved post-loop via the same outcome model as realised cases; see
+  ## branching_process_main). A direct count, hence a LOWER BOUND on deaths averted.
+  ##
+  ## tdf-based cohort counters describe REALISED cases: `n_ring_vaccinated_cases`
+  ## received a dose but were infected anyway; `n_ring_vax_breakthroughs` were
+  ## additionally protected in time (a true vaccine failure / reduced transmitter).
+  ##--------------------------------------------------------------
+  ring_treated <- attr(tdf, "ring_vax_num_treated", exact = TRUE)
+  if (is.null(ring_treated) && !is.null(sim_info$ring_vax_num_treated)) {
+    ring_treated <- sim_info$ring_vax_num_treated
+  }
+
+  n_ring_vax_traced     <- if (!is.null(ring_treated)) ring_treated$traced     else NA_real_
+  n_ring_vax_vaccinated <- if (!is.null(ring_treated)) ring_treated$vaccinated else NA_real_
+  n_ring_vax_protected  <- if (!is.null(ring_treated)) ring_treated$protected  else NA_real_
+  n_ring_vax_prevented  <- if (!is.null(ring_treated)) ring_treated$prevented  else NA_real_
+  n_ring_vax_prevented_deaths <- if (!is.null(ring_treated) && !is.null(ring_treated$prevented_deaths)) {
+    ring_treated$prevented_deaths
+  } else NA_real_
+
+  if (!is.null(tdf$ring_vaccinated)) {
+    n_ring_vaccinated_cases <- sum(tdf$ring_vaccinated & subset_vector, na.rm = TRUE)
+    n_ring_vax_breakthroughs <- sum(tdf$ring_vax_breakthrough & subset_vector, na.rm = TRUE)
+  } else {
+    n_ring_vaccinated_cases  <- NA_real_
+    n_ring_vax_breakthroughs <- NA_real_
+  }
+
+  ##--------------------------------------------------------------
   ## 6. Return a named list
   ##--------------------------------------------------------------
   out <- list(
@@ -248,7 +288,17 @@ summarise_output <- function(
     n_obv_pep_eligible_cases          = n_obv_pep_eligible_cases,
     n_obv_pep_treated_cases           = n_obv_pep_treated_cases,
     n_obv_pep_breakthroughs           = n_obv_pep_breakthroughs,
-    prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent
+    prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent,
+
+    ## Ring-vaccination gate counters (see Step 5b for set-nesting semantics)
+    n_ring_vax_traced                 = n_ring_vax_traced,
+    n_ring_vax_vaccinated             = n_ring_vax_vaccinated,
+    n_ring_vax_protected              = n_ring_vax_protected,
+    n_ring_vax_prevented              = n_ring_vax_prevented,
+    n_ring_vax_prevented_deaths       = n_ring_vax_prevented_deaths,
+    ## Ring-vaccination tdf-based cohort counters (realised cases)
+    n_ring_vaccinated_cases           = n_ring_vaccinated_cases,
+    n_ring_vax_breakthroughs          = n_ring_vax_breakthroughs
   )
 
   return(out)

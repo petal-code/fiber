@@ -259,3 +259,129 @@ test_that("a constant function reproduces the scalar gate exactly", {
   expect_identical(a$keep, b$keep)
   expect_identical(a$vaccinated, b$vaccinated)
 })
+
+## --- end-to-end through branching_process_main ------------------------
+
+rv_bpm_args <- function(...) {
+  fixed <- function(v) function(n) rep(v, n)
+  defaults <- list(
+    mn_offspring_genPop           = 2.0,
+    overdisp_offspring_genPop     = 0.5,
+    Tg_shape_genPop               = 2,
+    Tg_rate_genPop                = 0.15,
+    mn_offspring_hcw              = 2.0,
+    overdisp_offspring_hcw        = 0.5,
+    Tg_shape_hcw                  = 2,
+    Tg_rate_hcw                   = 0.15,
+    mn_offspring_funeral          = 1.0,
+    overdisp_offspring_funeral    = 0.5,
+    Tg_shape_funeral              = 10,
+    Tg_rate_funeral               = 5,
+    incubation_period             = fixed(5),
+    onset_to_hospitalisation      = fixed(3),
+    onset_to_death                = fixed(7),
+    onset_to_recovery             = fixed(10),
+    hospitalisation_to_death      = fixed(7),
+    hospitalisation_to_recovery   = fixed(10),
+    prob_symptomatic              = 0.9,
+    prob_hospitalised_hcw         = 0.5,
+    prob_hospitalised_genPop      = 0.5,
+    prob_death_comm               = 0.5,
+    prob_death_hosp               = 0.3,
+    prob_hcw_cond_genPop_comm     = 0.01,
+    prob_hcw_cond_genPop_hospital = 0.3,
+    prob_hcw_cond_hcw_comm        = 0.01,
+    prob_hcw_cond_hcw_hospital    = 0.3,
+    prob_hospital_cond_hcw_preAdm = 0.5,
+    ppe_coverage_hcw              = 0.5,
+    ppe_efficacy                  = 1,
+    prop_etu                      = 1,
+    etu_efficacy                  = 0.5,
+    general_hospital_quarantine_efficacy = 0.5,
+    p_unsafe_funeral_comm_hcw     = 0.5,
+    p_unsafe_funeral_hosp_hcw     = 0.2,
+    p_unsafe_funeral_comm_genPop  = 0.5,
+    p_unsafe_funeral_hosp_genPop  = 0.2,
+    safe_funeral_efficacy         = 1.0,
+    prob_hcw_cond_funeral_hcw     = 0.05,
+    prob_hcw_cond_funeral_genPop  = 0.05,
+    population                    = 5000,
+    hcw_per_capita                = 0.02,
+    check_final_size              = 300,
+    seeding_cases                 = 5,
+    seed                          = 1L
+  )
+  utils::modifyList(defaults, list(...))
+}
+
+test_that("disabled ring vaccination is byte-identical to a default run (existing columns)", {
+  base <- do.call(branching_process_main, rv_bpm_args(seed = 3L))
+  off  <- do.call(branching_process_main, rv_bpm_args(seed = 3L, ring_vax_enabled = FALSE))
+  shared <- setdiff(names(base$tdf), c("ring_vax_parent_detection_time",
+                                       "ring_vax_parent_infection_time",
+                                       "ring_vax_traced_by_parent", "ring_vaccinated",
+                                       "ring_vax_breakthrough", "time_ring_vaccinated_absolute"))
+  expect_equal(base$tdf[shared], off$tdf[shared])
+  ## And the ring columns are all at their inert defaults when disabled.
+  expect_true(all(!off$tdf$ring_vaccinated))
+  expect_true(all(!off$tdf$ring_vax_breakthrough))
+  expect_true(all(is.na(off$tdf$time_ring_vaccinated_absolute)))
+  expect_null(off$ring_prevented_completed)
+  s <- summarise_output(off$tdf, sim_info = off$sim_info)
+  expect_equal(s$n_ring_vax_prevented, 0L)
+  expect_equal(s$n_ring_vax_prevented_deaths, 0L)
+})
+
+test_that("ring vaccination runs end-to-end and reduces realised cases under full prevention", {
+  ## Full, fast prevention: every symptomatic case detected, contacts always traced,
+  ## vaccinated and protected instantly, vaccine fully efficacious.
+  full <- rv_bpm_args(
+    seed = 3L, ring_vax_enabled = TRUE, ring_vax_n_rings = 2,
+    ring_vax_detection_prob = 1, ring_vax_reporting_delay = 0,
+    ring_vax_trace_prob = 1, ring_vax_coverage = 1, ring_vax_efficacy_infection = 1,
+    ring_vax_efficacy_transmission = 1, ring_vax_logistical_delay = 0,
+    ring_vax_protection_delay = 0
+  )
+  res <- do.call(branching_process_main, full)
+  s_on <- summarise_output(res$tdf, sim_info = res$sim_info)
+  off  <- do.call(branching_process_main, rv_bpm_args(seed = 3L))
+  s_off <- summarise_output(off$tdf, sim_info = off$sim_info)
+  ## Ring vax should curtail the outbreak well below the no-intervention size.
+  expect_lt(s_on$n_cases_total, s_off$n_cases_total)
+  expect_gt(s_on$n_ring_vax_prevented, 0)
+})
+
+test_that("ring-vax counters nest and prevented_deaths is bounded and reproducible", {
+  args <- rv_bpm_args(
+    seed = 7L, ring_vax_enabled = TRUE, ring_vax_detection_prob = 0.8,
+    ring_vax_trace_prob = 0.8, ring_vax_coverage = 0.7, ring_vax_efficacy_infection = 0.8,
+    ring_vax_efficacy_transmission = 0.5, ring_vax_logistical_delay = 1,
+    ring_vax_protection_delay = 2
+  )
+  r1 <- do.call(branching_process_main, args)
+  r2 <- do.call(branching_process_main, args)
+  s  <- summarise_output(r1$tdf, sim_info = r1$sim_info)
+  expect_true(s$n_ring_vax_prevented  <= s$n_ring_vax_protected)
+  expect_true(s$n_ring_vax_protected  <= s$n_ring_vax_vaccinated)
+  expect_true(s$n_ring_vax_vaccinated <= s$n_ring_vax_traced)
+  expect_true(s$n_ring_vax_prevented_deaths <= s$n_ring_vax_prevented)
+  ## Deferred counterfactual is post-loop, so the tree is reproducible under a seed.
+  expect_equal(r1$tdf, r2$tdf)
+  expect_equal(s$n_ring_vax_prevented_deaths,
+               summarise_output(r2$tdf, sim_info = r2$sim_info)$n_ring_vax_prevented_deaths)
+  ## prevented_completed has one row per prevented infection; outcomes sum to deaths.
+  if (!is.null(r1$ring_prevented_completed)) {
+    expect_equal(nrow(r1$ring_prevented_completed), s$n_ring_vax_prevented)
+    expect_equal(sum(r1$ring_prevented_completed$outcome, na.rm = TRUE),
+                 s$n_ring_vax_prevented_deaths)
+  }
+})
+
+test_that("summarise_output exposes the expected ring-vax field names", {
+  off <- do.call(branching_process_main, rv_bpm_args(seed = 1L))
+  out <- summarise_output(off$tdf, sim_info = off$sim_info)
+  expected <- c("n_ring_vax_traced", "n_ring_vax_vaccinated", "n_ring_vax_protected",
+                "n_ring_vax_prevented", "n_ring_vax_prevented_deaths",
+                "n_ring_vaccinated_cases", "n_ring_vax_breakthroughs")
+  expect_equal(setdiff(expected, names(out)), character(0))
+})

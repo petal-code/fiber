@@ -62,7 +62,7 @@ function reproduces the equivalent scalar run bit-for-bit under a fixed seed (no
 
 ### Medical Countermeasures (MCMs)
 
-Four intervention mechanisms. The three NPIs are each parameterised as a
+Five intervention mechanisms. The three NPIs are each parameterised as a
 time-varying **coverage** lever (probability the intervention reaches a given
 exposure) times a fixed scalar **efficacy** (effect conditional on reaching it).
 The intended fitting workflow pre-specifies the coverage curves from the
@@ -83,6 +83,10 @@ literature and varies the efficacies.
   `1 − p_unsafe_funeral_*(t)`; efficacy = `safe_funeral_efficacy` (fixed scalar).
 - **Obeldesivir (OBV) PEP** — post-exposure prophylaxis for exposed candidates in
   target class/locations (default: HCWs at hospital). Pharmaceutical, not an NPI.
+- **Ring vaccination** — targeted, cross-generational vaccination of the contacts
+  (ring 1) and contacts-of-contacts (ring 2) of detected cases. Pharmaceutical;
+  applied as two main-loop hooks rather than a per-exposure thinning layer (see
+  below). Toggled by `ring_vax_enabled` (default off → no extra RNG, byte-identical).
 
 Hospital keep-probability composes the PPE and quarantine layers multiplicatively
 (Swiss-cheese): `(1 − source_PPE) × (1 − receiver_PPE) × (1 − hospital_quarantine)`,
@@ -112,6 +116,25 @@ The completed replay frame itself is returned as `out$prevented_completed` (alon
 
 Default efficacy curve `obv_pep_efficacy_from_dpc()` is NHP-derived (E0 = 0.82 at dpc=0, decays to 0 at dpc ≥ 10).
 
+### Ring vaccination details
+
+Ring vaccination is **parent-centric, not index-centric**: rather than an index reaching forward two generations (which would require simulating offspring that don't exist yet), every parent — when expanded — vaccinates its own children using the campaigns it carries: its **own** campaign (ring 1, if it is a detected index) and its **parent's** campaign (ring 2; these children are the grandparent's contacts-of-contacts). Because fiber expands infections in strict infection-time order, both campaigns are fully known when a parent is expanded, so each child's fate is decided once, at birth, with no forward simulation or re-evaluation. This captures the *vertical* (down-the-lineage) ring 2 exactly; the *lateral* sibling-mediated ring-2 path is deliberately not modelled (siblings are near-contemporaneous, so a sibling's campaign almost never gets ahead of a contemporaneous contact's infection).
+
+Implemented as two hooks in `branching_process_main` around offspring generation (both gated on `ring_vax_enabled`, so a disabled run draws zero ring-vax RNG and is byte-for-byte identical to a pre-feature simulation), plus the per-child gate `apply_ring_vax_gate()` in `R/ring_vax.R`:
+
+- **Hook A (parent infectiousness)**: a vaccinated-breakthrough parent transmits less, so its whole realised brood is thinned by `1 − ring_vax_efficacy_transmission` (post-hoc binomial thinning, as in the reference; NB overdispersion not exactly preserved, cf. OBV).
+- **Hook B (`apply_ring_vax_gate`)**: per candidate child, runs the chain `traced → received (coverage) → protected-in-time → averted (efficacy)` for ring 1 and ring 2, before `complete_offspring_info()` so averted infections never have natural history drawn.
+
+**Three clocks** drive a campaign anchored at case A: probabilities (`ring_vax_detection_prob`, `ring_vax_trace_prob`, `ring_vax_coverage`) and the delays are resolved on **A's infection time** (the triggering case's infection time); vaccination/protection availability is timed from **A's detection time** = symptom onset + `ring_vax_reporting_delay` (`v = detection + ring_vax_logistical_delay`, `p = v + ring_vax_protection_delay`, ring 2 adds `ring_vax_ring2_delay_increment`); the reach/protection race compares against **each child's infection time**.
+
+**Tracing is separate from vaccination**: a contact is *found* with prob `ring_vax_trace_prob` and then *vaccinated* with prob `ring_vax_coverage` (conditional on being traced — so trace_prob need not exceed coverage). With `ring_vax_require_intermediate_traced = TRUE` (default), ring 2 reaches a grandchild only if the intermediate parent was itself traced by the grandparent's ring 1 (carried per node as `ring_vax_traced_by_parent`); tracing — not vaccination or detection — carries the chain, so an asymptomatic/unvaccinated-but-traced intermediate still relays the ring. `ring_vax_independent_coverage` toggles an independent coverage draw per ring (a contact missed by one ring can still be caught by the other) vs one acceptance draw per contact. Efficacy against infection is all-or-nothing, drawn once per protected-in-time contact; a retained contact that was protected in time is a **breakthrough** (reduced transmitter, feeding Hook A next generation). `ring_vax_n_rings = 1` disables ring 2 and reproduces the single-ring reference model.
+
+Per-node carried state (set at birth, read when the node is expanded): `ring_vax_parent_detection_time` / `ring_vax_parent_infection_time` (the grandparent anchor for the node's children's ring 2), `ring_vax_traced_by_parent` (gates ring 2 through the node), and `ring_vax_breakthrough` (drives Hook A). Plus analysis columns `ring_vaccinated` and `time_ring_vaccinated_absolute`.
+
+Five gate counters (accumulated across the run; **unique-contact** counts among realised would-be offspring, a lower-bound dose proxy since fiber has no susceptible pool for never-infected contacts) surface in `summarise_output()`, nested `traced ≥ vaccinated ≥ protected ≥ prevented`: `n_ring_vax_traced`, `n_ring_vax_vaccinated`, `n_ring_vax_protected`, `n_ring_vax_prevented`, and the deferred `n_ring_vax_prevented_deaths` (≤ prevented; resolved post-loop by replaying averted infections through the same outcome model as realised cases — identical mechanism to OBV's, so it never perturbs the trajectory). Plus tdf-based cohort counters `n_ring_vaccinated_cases` and `n_ring_vax_breakthroughs` (realised cases). `out$ring_prevented_completed` returns the replayed counterfactual natural history of the averted infections (NULL when none).
+
+Interaction note: ring vaccination composes after PPE/ETU/OBV (it prunes the already-thinned realised brood). If OBV and ring vax are enabled together, the OBV *accumulator* counters can slightly over-count exposures that ring vax later averts; in practice the two pharmaceutical levers are alternatives.
+
 ### Infection Locations
 
 Cases are tracked by where infection occurred: `community`, `hospital`, or `funeral`
@@ -127,6 +150,7 @@ Uses testthat (edition 3). Test files go in `tests/testthat/`. Current suites:
 - `test-conditional_cfr.R`
 - `test-obv_pep.R`
 - `test-compute_reproduction_number.R`
+- `test-ring_vax.R`
 
 ## Notes
 

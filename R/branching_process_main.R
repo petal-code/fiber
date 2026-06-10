@@ -104,6 +104,40 @@
 #'   "HCW").
 #' @param obv_pep_target_locations Character vector. Exposure settings eligible for OBV PEP (default
 #'   "hospital").
+#' @param ring_vax_enabled Logical scalar. If TRUE, apply the ring-vaccination hooks. When FALSE
+#'   (default) no ring-vax RNG is drawn, so the run is byte-for-byte identical to a pre-feature
+#'   simulation.
+#' @param ring_vax_start Numeric scalar. Calendar time from which vaccination is available; a ring
+#'   acts on a contact only if the vaccination time is at or after this.
+#' @param ring_vax_n_rings Integer 1 or 2. Number of rings; 1 disables ring 2 (the grandparent
+#'   campaign) and reproduces a single-ring model.
+#' @param ring_vax_detection_prob Numeric in `[0, 1]` or function(t). Probability a symptomatic case
+#'   is detected and becomes an index that triggers a ring. Resolved at the case's infection time.
+#' @param ring_vax_reporting_delay Non-negative numeric or function(t). Delay from symptom onset to
+#'   detection.
+#' @param ring_vax_trace_prob Numeric in `[0, 1]` or function(t). Probability a contact is traced
+#'   given its index was detected. Resolved at the triggering case's infection time.
+#' @param ring_vax_coverage Numeric in `[0, 1]` or function(t). Probability a traced contact is
+#'   vaccinated (conditional on tracing). Resolved at the triggering case's infection time.
+#' @param ring_vax_efficacy_infection Numeric in `[0, 1]`. All-or-nothing vaccine efficacy against
+#'   infection (fixed scalar).
+#' @param ring_vax_efficacy_transmission Numeric in `[0, 1]`. Reduction in onward transmissibility of
+#'   breakthrough infections (fixed scalar).
+#' @param ring_vax_logistical_delay Non-negative numeric or function(t). Delay from index detection to
+#'   contact vaccination.
+#' @param ring_vax_protection_delay Non-negative numeric or function(t). Delay from vaccination to
+#'   protection developing.
+#' @param ring_vax_ring2_delay_increment Non-negative numeric or function(t). Extra second-hop tracing
+#'   delay applied to ring 2.
+#' @param ring_vax_independent_coverage Logical scalar. If TRUE, an independent coverage draw per ring
+#'   (a contact missed by one ring can still be vaccinated by the other); if FALSE, one acceptance
+#'   draw per contact shared across rings.
+#' @param ring_vax_require_intermediate_traced Logical scalar. If TRUE (default), ring 2 reaches a
+#'   grandchild only when the intermediate parent was itself traced by the grandparent's ring 1.
+#' @param ring_vax_target_class Character vector. Offspring classes eligible for ring vaccination
+#'   (default both).
+#' @param ring_vax_target_locations Character vector. Exposure settings eligible for ring vaccination
+#'   (default community, hospital, funeral).
 #' @param p_unsafe_funeral_comm_hcw Numeric in `[0, 1]` or function(t). Probability of an unsafe
 #'   funeral after a community death of an HCW.
 #' @param p_unsafe_funeral_hosp_hcw Numeric in `[0, 1]` or function(t). Probability of an unsafe
@@ -134,7 +168,11 @@
 #'   \describe{
 #'     \item{`tdf`}{The simulated transmission tree: one row per realised
 #'       infection, ordered by absolute infection time. Carries attributes
-#'       `hcw_total`, `hcw_infected`, `hcw_remaining`, and `obv_pep_num_treated`.}
+#'       `hcw_total`, `hcw_infected`, `hcw_remaining`, `obv_pep_num_treated`, and
+#'       `ring_vax_num_treated`.}
+#'     \item{`ring_prevented_completed`}{As `prevented_completed`, but for the
+#'       infections ring vaccination averted; `NULL` when none (including when
+#'       `ring_vax_enabled = FALSE`).}
 #'     \item{`prevented_completed`}{A data frame of the infections the OBV PEP gate
 #'       prevented -- the averted index infections only, not their averted onward
 #'       chains -- each replayed through the same outcome model as realised cases to
@@ -146,8 +184,8 @@
 #'       zero-time dummy parent, so `parent` and `generation` are `NA` and
 #'       `time_infection_relative` equals `time_infection_absolute`.}
 #'     \item{`sim_info`}{Scalar run metadata: `population`, `hcw_per_capita`,
-#'       `hcw_total`, `seed`, `obv_pep_enabled`, and the `obv_pep_num_treated`
-#'       counters.}
+#'       `hcw_total`, `seed`, `obv_pep_enabled`, `obv_pep_num_treated`,
+#'       `ring_vax_enabled`, and `ring_vax_num_treated`.}
 #'   }
 #'
 #' @export
