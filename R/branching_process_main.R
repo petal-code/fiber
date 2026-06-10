@@ -224,6 +224,30 @@ branching_process_main <- function(
   obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
   obv_pep_target_locations = "hospital",     # character vector: exposure settings eligible for OBV PEP
 
+  ## Ring vaccination. A targeted, cross-generational intervention applied as two
+  ## main-loop hooks (breakthrough-transmissibility thinning + the per-child
+  ## apply_ring_vax_gate()). When ring_vax_enabled = FALSE no ring-vax RNG is drawn,
+  ## so a disabled run is bit-for-bit identical to a pre-feature simulation. When
+  ## enabled, the gate consumes extra draws (detection, tracing, coverage, efficacy)
+  ## per parent expansion, so enabled / disabled runs with the same seed diverge --
+  ## use replicate seeds for paired comparisons (cf. the OBV caveat above).
+  ring_vax_enabled = FALSE,                  # logical: apply the ring-vaccination hooks
+  ring_vax_start = 0,                        # scalar: calendar time from which vaccination is available
+  ring_vax_n_rings = 2,                      # 1 or 2: number of rings (1 disables ring 2)
+  ring_vax_detection_prob = 1,               # scalar/function(t): P(symptomatic case detected as an index)
+  ring_vax_reporting_delay = 0,              # scalar/function(t): symptom onset -> detection
+  ring_vax_trace_prob = 0,                   # scalar/function(t): P(contact found | index detected)
+  ring_vax_coverage = 0,                     # scalar/function(t): P(vaccinated | traced)
+  ring_vax_efficacy_infection = 0,           # scalar: all-or-nothing VE against infection
+  ring_vax_efficacy_transmission = 0,        # scalar: transmissibility reduction for breakthroughs
+  ring_vax_logistical_delay = 0,             # scalar/function(t): detection -> contact vaccination
+  ring_vax_protection_delay = 0,             # scalar/function(t): vaccination -> protection
+  ring_vax_ring2_delay_increment = 0,        # scalar/function(t): extra second-hop tracing delay for ring 2
+  ring_vax_independent_coverage = TRUE,      # logical: independent coverage draw per ring vs one per contact
+  ring_vax_require_intermediate_traced = TRUE, # logical: ring 2 requires the intermediate parent to have been traced
+  ring_vax_target_class = c("genPop", "HCW"),           # character vector: offspring classes eligible for ring vax
+  ring_vax_target_locations = c("community", "hospital", "funeral"), # character vector: settings eligible for ring vax
+
   ## Funeral occurrence
   p_unsafe_funeral_comm_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, HCW
   p_unsafe_funeral_hosp_hcw = NULL, ## scalar or function(t): probability of unsafe funeral after a hospital death, HCW
@@ -313,8 +337,51 @@ branching_process_main <- function(
             call. = FALSE)
   }
 
+  ## --- Ring-vaccination validation -----------------------------------------
+  if (!is.logical(ring_vax_enabled) || length(ring_vax_enabled) != 1L || is.na(ring_vax_enabled)) {
+    stop("`ring_vax_enabled` must be a single logical value.", call. = FALSE)
+  }
+  if (!is.logical(ring_vax_independent_coverage) || length(ring_vax_independent_coverage) != 1L ||
+      is.na(ring_vax_independent_coverage)) {
+    stop("`ring_vax_independent_coverage` must be a single logical value.", call. = FALSE)
+  }
+  if (!is.logical(ring_vax_require_intermediate_traced) ||
+      length(ring_vax_require_intermediate_traced) != 1L ||
+      is.na(ring_vax_require_intermediate_traced)) {
+    stop("`ring_vax_require_intermediate_traced` must be a single logical value.", call. = FALSE)
+  }
+  if (!is.numeric(ring_vax_n_rings) || length(ring_vax_n_rings) != 1L ||
+      !(ring_vax_n_rings %in% c(1, 2))) {
+    stop("`ring_vax_n_rings` must be 1 or 2.", call. = FALSE)
+  }
+  if (!is.numeric(ring_vax_start) || length(ring_vax_start) != 1L || is.na(ring_vax_start)) {
+    stop("`ring_vax_start` must be a single numeric value.", call. = FALSE)
+  }
+  ## Efficacies are fixed scalars in [0, 1] (the coverage / tracing levers carry the
+  ## time variation, matching the package convention).
+  validate_scalar_probability(ring_vax_efficacy_infection, "ring_vax_efficacy_infection")
+  validate_scalar_probability(ring_vax_efficacy_transmission, "ring_vax_efficacy_transmission")
+  if (!is.character(ring_vax_target_class) || length(ring_vax_target_class) < 1L) {
+    stop("`ring_vax_target_class` must be a non-empty character vector.", call. = FALSE)
+  }
+  if (!is.character(ring_vax_target_locations) || length(ring_vax_target_locations) < 1L) {
+    stop("`ring_vax_target_locations` must be a non-empty character vector.", call. = FALSE)
+  }
+  ## Warn on an enabled-but-inert configuration (mirrors the OBV no-op warning).
+  is_zero_scalar <- function(x) is.numeric(x) && length(x) == 1L && !is.na(x) && x == 0
+  if (isTRUE(ring_vax_enabled) &&
+      (is_zero_scalar(ring_vax_trace_prob) || is_zero_scalar(ring_vax_coverage) ||
+       is_zero_scalar(ring_vax_efficacy_infection))) {
+    warning("`ring_vax_enabled = TRUE` but one of `ring_vax_trace_prob`, `ring_vax_coverage` or `ring_vax_efficacy_infection` is 0; ring vaccination will prevent nothing.",
+            call. = FALSE)
+  }
+
   ## OBV PEP per-call accumulator: 7 gate counters, see empty_obv_pep_num_treated().
   obv_num_treated <- empty_obv_pep_num_treated()
+  ## Ring-vaccination per-call accumulator + averted-infection snapshots (the latter
+  ## resolved to would-be deaths after the loop, like the OBV analogue).
+  ring_num_treated <- empty_ring_vax_num_treated()
+  ring_prevented_info_list <- list()
   ## Collected per-call snapshots of infections OBV prevented (no RNG drawn in
   ## the loop). Their counterfactual would-be deaths are resolved once, after the
   ## loop, to populate obv_num_treated$prevented_deaths without perturbing the
@@ -344,7 +411,10 @@ branching_process_main <- function(
     ppe_coverage_hcw              = ppe_coverage_hcw,
     prop_etu                      = prop_etu,
     obv_pep_coverage          = obv_pep_coverage,
-    obv_pep_adherence             = obv_pep_adherence
+    obv_pep_adherence             = obv_pep_adherence,
+    ring_vax_detection_prob       = ring_vax_detection_prob,
+    ring_vax_trace_prob           = ring_vax_trace_prob,
+    ring_vax_coverage             = ring_vax_coverage
   )
   ## Build the sampling grid from ALL time-varying inputs -- the probabilities
   ## above plus the positive-valued curves below -- so the upfront check lands on
@@ -357,7 +427,11 @@ branching_process_main <- function(
       obv_pep_dpc                  = obv_pep_dpc,
       mn_offspring_genPop          = mn_offspring_genPop,
       mn_offspring_hcw             = mn_offspring_hcw,
-      mn_offspring_funeral         = mn_offspring_funeral
+      mn_offspring_funeral         = mn_offspring_funeral,
+      ring_vax_reporting_delay        = ring_vax_reporting_delay,
+      ring_vax_logistical_delay       = ring_vax_logistical_delay,
+      ring_vax_protection_delay       = ring_vax_protection_delay,
+      ring_vax_ring2_delay_increment  = ring_vax_ring2_delay_increment
     )
   )
   sanity_grid <- build_sanity_grid(grid_inputs)
@@ -380,6 +454,12 @@ branching_process_main <- function(
 
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
   check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")
+
+  ## Ring-vaccination delays are non-negative (0 is a meaningful boundary value).
+  check_nonneg_on_grid(ring_vax_reporting_delay,       sanity_grid, "ring_vax_reporting_delay")
+  check_nonneg_on_grid(ring_vax_logistical_delay,      sanity_grid, "ring_vax_logistical_delay")
+  check_nonneg_on_grid(ring_vax_protection_delay,      sanity_grid, "ring_vax_protection_delay")
+  check_nonneg_on_grid(ring_vax_ring2_delay_increment, sanity_grid, "ring_vax_ring2_delay_increment")
 
   ## prob_death_hosp must not exceed prob_death_comm (so second_chance_death_prob <= 1).
   ## Currently both are scalars; if they become time-varying in future, this still
@@ -436,6 +516,12 @@ branching_process_main <- function(
     obv_pep_received               = rep(FALSE, max_cases),
     obv_pep_adherent               = rep(FALSE, max_cases),
     obv_pep_dpc                    = rep(NA_real_, max_cases),
+    ring_vax_parent_detection_time = rep(NA_real_, max_cases),  # carried: this node's parent's detection time (ring-2 timing anchor)
+    ring_vax_parent_infection_time = rep(NA_real_, max_cases),  # carried: this node's parent's infection time (ring-2 probability clock)
+    ring_vax_traced_by_parent      = rep(FALSE, max_cases),     # carried: traced by parent's ring 1 (gates ring 2 through this node)
+    ring_vaccinated                = rep(FALSE, max_cases),     # received a ring-vax dose before infection
+    ring_vax_breakthrough          = rep(FALSE, max_cases),     # protected in time but infected anyway (reduced transmitter)
+    time_ring_vaccinated_absolute  = rep(NA_real_, max_cases),  # absolute time of (earliest) ring vaccination
     n_offspring                    = integer(max_cases),
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -500,6 +586,12 @@ branching_process_main <- function(
     obv_pep_received               = rep(FALSE, seeding_cases),
     obv_pep_adherent               = rep(FALSE, seeding_cases),
     obv_pep_dpc                    = rep(NA_real_, seeding_cases),
+    ring_vax_parent_detection_time = rep(NA_real_, seeding_cases),
+    ring_vax_parent_infection_time = rep(NA_real_, seeding_cases),
+    ring_vax_traced_by_parent      = rep(FALSE, seeding_cases),
+    ring_vaccinated                = rep(FALSE, seeding_cases),
+    ring_vax_breakthrough          = rep(FALSE, seeding_cases),
+    time_ring_vaccinated_absolute  = rep(NA_real_, seeding_cases),
     n_offspring                    = NA_integer_,
     offspring_generated            = FALSE,
     stringsAsFactors = FALSE
@@ -538,6 +630,12 @@ branching_process_main <- function(
   v_obv_pep_received              <- tdf$obv_pep_received
   v_obv_pep_adherent              <- tdf$obv_pep_adherent
   v_obv_pep_dpc                   <- tdf$obv_pep_dpc
+  v_ring_vax_parent_detection_time <- tdf$ring_vax_parent_detection_time
+  v_ring_vax_parent_infection_time <- tdf$ring_vax_parent_infection_time
+  v_ring_vax_traced_by_parent      <- tdf$ring_vax_traced_by_parent
+  v_ring_vaccinated                <- tdf$ring_vaccinated
+  v_ring_vax_breakthrough          <- tdf$ring_vax_breakthrough
+  v_time_ring_vaccinated_absolute  <- tdf$time_ring_vaccinated_absolute
   v_n_offspring                   <- tdf$n_offspring
   v_offspring_generated           <- tdf$offspring_generated
   rm(tdf)
@@ -590,6 +688,12 @@ branching_process_main <- function(
       obv_pep_received              = v_obv_pep_received[idx],
       obv_pep_adherent              = v_obv_pep_adherent[idx],
       obv_pep_dpc                   = v_obv_pep_dpc[idx],
+      ring_vax_parent_detection_time = v_ring_vax_parent_detection_time[idx],
+      ring_vax_parent_infection_time = v_ring_vax_parent_infection_time[idx],
+      ring_vax_traced_by_parent      = v_ring_vax_traced_by_parent[idx],
+      ring_vaccinated                = v_ring_vaccinated[idx],
+      ring_vax_breakthrough          = v_ring_vax_breakthrough[idx],
+      time_ring_vaccinated_absolute  = v_time_ring_vaccinated_absolute[idx],
       n_offspring                   = v_n_offspring[idx],
       offspring_generated           = v_offspring_generated[idx],
       stringsAsFactors              = FALSE
@@ -718,6 +822,75 @@ branching_process_main <- function(
     ## Completing offspring information if there are any. Combine the two
     ## offspring sources once (previously rbind'd twice -- guard + call).
     combined_offspring_df <- rbind(offspring_community_healthcare_df, offspring_funeral_df)
+
+    #############################################################################################
+    ### Step 3b: Ring vaccination (Hook A: breakthrough infectiousness; Hook B: protect children)
+    ###
+    ### All RNG here is gated on ring_vax_enabled, so a disabled run draws nothing extra
+    ### and is bit-for-bit identical to the pre-feature simulation. Both hooks run BEFORE
+    ### complete_offspring_info so averted infections never have natural history drawn.
+    #############################################################################################
+    ## Survivor-aligned ring-vax metadata; defaulted so the append path stays uniform.
+    rv_vaccinated       <- logical(0)
+    rv_breakthrough     <- logical(0)
+    rv_time_vaccinated  <- numeric(0)
+    rv_traced_by_parent <- logical(0)
+    rv_parent_det_time  <- NA_real_
+    if (ring_vax_enabled && nrow(combined_offspring_df) > 0) {
+      ## Hook A: a vaccinated-breakthrough parent transmits less -- thin its whole
+      ## brood by (1 - efficacy_transmission). Post-hoc binomial thinning matches the
+      ## reference model (NB overdispersion not exactly preserved; cf. the OBV caveat).
+      if (isTRUE(parent_info$ring_vax_breakthrough)) {
+        keep_bt <- as.logical(rbinom(n = nrow(combined_offspring_df), size = 1,
+                                     prob = 1 - ring_vax_efficacy_transmission))
+        combined_offspring_df <- combined_offspring_df[keep_bt, , drop = FALSE]
+      }
+      if (nrow(combined_offspring_df) > 0) {
+        ## Hook B: per-child gate. ring 1 anchored at this parent; ring 2 anchored at
+        ## the grandparent (carried on parent_info via the ring_vax_parent_* fields).
+        rv <- apply_ring_vax_gate(
+          brood                                = combined_offspring_df,
+          parent_time_infection_absolute       = parent_info$time_infection_absolute,
+          parent_symptomatic                   = parent_info$symptomatic,
+          parent_time_symptom_onset_absolute   = parent_info$time_symptom_onset_absolute,
+          grandparent_detection_time           = parent_info$ring_vax_parent_detection_time,
+          grandparent_infection_time           = parent_info$ring_vax_parent_infection_time,
+          parent_traced_by_grandparent         = parent_info$ring_vax_traced_by_parent,
+          ring_vax_start                       = ring_vax_start,
+          ring_vax_n_rings                     = ring_vax_n_rings,
+          ring_vax_detection_prob              = ring_vax_detection_prob,
+          ring_vax_reporting_delay             = ring_vax_reporting_delay,
+          ring_vax_trace_prob                  = ring_vax_trace_prob,
+          ring_vax_coverage                    = ring_vax_coverage,
+          ring_vax_efficacy_infection          = ring_vax_efficacy_infection,
+          ring_vax_logistical_delay            = ring_vax_logistical_delay,
+          ring_vax_protection_delay            = ring_vax_protection_delay,
+          ring_vax_ring2_delay_increment       = ring_vax_ring2_delay_increment,
+          ring_vax_independent_coverage        = ring_vax_independent_coverage,
+          ring_vax_require_intermediate_traced = ring_vax_require_intermediate_traced,
+          ring_vax_target_class                = ring_vax_target_class,
+          ring_vax_target_locations            = ring_vax_target_locations
+        )
+        ## Accumulate counters; stash averted infections for the deferred
+        ## prevented-deaths counterfactual (resolved once, after the loop).
+        ring_num_treated$traced     <- ring_num_treated$traced     + rv$num_treated$traced
+        ring_num_treated$vaccinated <- ring_num_treated$vaccinated + rv$num_treated$vaccinated
+        ring_num_treated$protected  <- ring_num_treated$protected  + rv$num_treated$protected
+        ring_num_treated$prevented  <- ring_num_treated$prevented  + rv$num_treated$prevented
+        if (nrow(rv$prevented_info) > 0) {
+          ring_prevented_info_list[[length(ring_prevented_info_list) + 1L]] <- rv$prevented_info
+        }
+        ## Drop averted infections; carry survivor-aligned metadata to the append.
+        surv <- rv$keep
+        combined_offspring_df <- combined_offspring_df[surv, , drop = FALSE]
+        rv_vaccinated       <- rv$vaccinated[surv]
+        rv_breakthrough     <- rv$breakthrough[surv]
+        rv_time_vaccinated  <- rv$time_vaccinated[surv]
+        rv_traced_by_parent <- rv$traced_by_parent[surv]
+        rv_parent_det_time  <- rv$parent_detection_time
+      }
+    }
+
     if (nrow(combined_offspring_df) > 0) {
       complete_offspring_df <- complete_offspring_info(parent_info = parent_info,
                                                        offspring_dataframe = combined_offspring_df,
@@ -778,6 +951,19 @@ branching_process_main <- function(
       v_obv_pep_received[rows]              <- complete_offspring_df$obv_pep_received
       v_obv_pep_adherent[rows]              <- complete_offspring_df$obv_pep_adherent
       v_obv_pep_dpc[rows]                   <- complete_offspring_df$obv_pep_dpc
+      ## Ring-vax columns. Written only when enabled; disabled runs leave the
+      ## pre-allocated defaults (FALSE / NA), so existing columns stay byte-identical.
+      ## The parent_* fields stamp THIS parent's detection/infection times onto the
+      ## children (their ring-2 grandparent anchor when they later expand); the
+      ## survivor-aligned rv_* vectors have length n_new.
+      if (ring_vax_enabled) {
+        v_ring_vax_parent_detection_time[rows] <- rv_parent_det_time
+        v_ring_vax_parent_infection_time[rows] <- parent_info$time_infection_absolute
+        v_ring_vax_traced_by_parent[rows]      <- rv_traced_by_parent
+        v_ring_vaccinated[rows]                <- rv_vaccinated
+        v_ring_vax_breakthrough[rows]          <- rv_breakthrough
+        v_time_ring_vaccinated_absolute[rows]  <- rv_time_vaccinated
+      }
       v_n_offspring[rows]                   <- complete_offspring_df$n_offspring
       v_offspring_generated[rows]           <- complete_offspring_df$offspring_generated
       n_filled <- n_filled + n_new
@@ -817,6 +1003,12 @@ branching_process_main <- function(
     obv_pep_received              = v_obv_pep_received,
     obv_pep_adherent              = v_obv_pep_adherent,
     obv_pep_dpc                   = v_obv_pep_dpc,
+    ring_vax_parent_detection_time = v_ring_vax_parent_detection_time,
+    ring_vax_parent_infection_time = v_ring_vax_parent_infection_time,
+    ring_vax_traced_by_parent      = v_ring_vax_traced_by_parent,
+    ring_vaccinated                = v_ring_vaccinated,
+    ring_vax_breakthrough          = v_ring_vax_breakthrough,
+    time_ring_vaccinated_absolute  = v_time_ring_vaccinated_absolute,
     n_offspring                   = v_n_offspring,
     offspring_generated           = v_offspring_generated,
     stringsAsFactors              = FALSE
@@ -890,10 +1082,61 @@ branching_process_main <- function(
     }
   }
 
+  #########################################################################################
+  ### Deferred ring-vaccination "prevented deaths" counterfactual
+  ###
+  ### Exactly the OBV machinery above, applied to the infections ring vaccination averted:
+  ### replay each through the same outcome model to decide whether it would have died had
+  ### it occurred. A direct count (the averted index infections only, not their averted
+  ### onward chains -- a lower bound on deaths the programme averts). Run after the loop so
+  ### the draws never perturb the simulated trajectory; skipped (no RNG) when nothing was
+  ### prevented, so a disabled run stays byte-for-byte identical.
+  #########################################################################################
+  ring_prevented_completed <- NULL
+  if (length(ring_prevented_info_list) > 0) {
+    ring_prevented_info <- do.call(rbind, ring_prevented_info_list)
+    if (nrow(ring_prevented_info) > 0) {
+      ring_prevented_offspring <- data.frame(
+        infection_location      = ring_prevented_info$infection_location,
+        time_infection_relative = ring_prevented_info$time_infection_absolute,
+        class                   = ring_prevented_info$class,
+        stringsAsFactors        = FALSE
+      )
+      ring_dummy_parent <- data.frame(
+        id                      = NA_integer_,
+        generation              = NA_integer_,
+        time_infection_absolute = 0,
+        stringsAsFactors        = FALSE
+      )
+      ring_prevented_completed <- complete_offspring_info(
+        parent_info                  = ring_dummy_parent,
+        offspring_dataframe          = ring_prevented_offspring,
+        prob_symptomatic             = prob_symptomatic,
+        prob_hospitalised_hcw        = prob_hospitalised_hcw,
+        prob_hospitalised_genPop     = prob_hospitalised_genPop,
+        prob_death_comm              = prob_death_comm,
+        prob_death_hosp              = prob_death_hosp,
+        p_unsafe_funeral_comm_hcw    = p_unsafe_funeral_comm_hcw,
+        p_unsafe_funeral_hosp_hcw    = p_unsafe_funeral_hosp_hcw,
+        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+        incubation_period            = incubation_period,
+        onset_to_hospitalisation     = onset_to_hospitalisation,
+        hospitalisation_delay_factor = hospitalisation_delay_factor,
+        hospitalisation_to_death     = hospitalisation_to_death,
+        hospitalisation_to_recovery  = hospitalisation_to_recovery,
+        onset_to_death               = onset_to_death,
+        onset_to_recovery            = onset_to_recovery
+      )
+      ring_num_treated$prevented_deaths <- sum(ring_prevented_completed$outcome, na.rm = TRUE)
+    }
+  }
+
   attr(tdf, "hcw_total") <- hcw_total
   attr(tdf, "hcw_infected") <- hcw_total - hcw_available
   attr(tdf, "hcw_remaining") <- hcw_available
   attr(tdf, "obv_pep_num_treated") <- obv_num_treated
+  attr(tdf, "ring_vax_num_treated") <- ring_num_treated
 
   out <- list(
     tdf = tdf,
@@ -901,13 +1144,17 @@ branching_process_main <- function(
     ## (averted index infections only; NULL when nothing was prevented). See the
     ## deferred-counterfactual block above and the @return docs for column notes.
     prevented_completed = prevented_completed,
+    ## Same, for the infections ring vaccination prevented (NULL when none).
+    ring_prevented_completed = ring_prevented_completed,
     sim_info = list(
       population          = population,
       hcw_per_capita      = hcw_per_capita,
       hcw_total           = hcw_total,
       seed                = seed,
       obv_pep_enabled     = obv_pep_enabled,
-      obv_pep_num_treated = obv_num_treated
+      obv_pep_num_treated = obv_num_treated,
+      ring_vax_enabled    = ring_vax_enabled,
+      ring_vax_num_treated = ring_num_treated
     )
   )
 
