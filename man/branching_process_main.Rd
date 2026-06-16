@@ -43,6 +43,7 @@ branching_process_main(
   obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
+  obv_pep_dpc_shape = NULL,
   obv_pep_efficacy = NULL,
   obv_pep_target_class = "HCW",
   obv_pep_target_locations = "hospital",
@@ -174,7 +175,16 @@ receives OBV PEP.}
 adhered to.}
 
 \item{obv_pep_dpc}{Non-negative numeric or function(t). Days post challenge/exposure to first
-dose.}
+dose, evaluated at each candidate's own absolute infection time. With
+\code{obv_pep_dpc_shape = NULL} this is each recipient's DPC exactly; with a shape it is the
+\emph{mean} DPC, so the average treatment delay can vary over calendar time while the
+efficacy(DPC) relationship stays fixed.}
+
+\item{obv_pep_dpc_shape}{NULL or a single positive numeric. NULL (default) keeps DPC
+deterministic at \code{obv_pep_dpc} (bit-for-bit identical to pre-feature runs). If supplied,
+each recipient draws an independent DPC from \code{Gamma(shape = obv_pep_dpc_shape, scale = obv_pep_dpc(t) / obv_pep_dpc_shape)} -- mean \code{obv_pep_dpc(t)}, variance
+\code{obv_pep_dpc(t)^2 / obv_pep_dpc_shape} (\code{CV = 1/sqrt(shape)}) -- giving individual
+variation in how quickly the drug is received post-exposure.}
 
 \item{obv_pep_efficacy}{NULL, numeric in \verb{[0, 1]}, or function(dpc). OBV efficacy; NULL uses
 \code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}}.}

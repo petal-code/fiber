@@ -97,7 +97,16 @@
 #' @param obv_pep_adherence Numeric in `[0, 1]` or function(t). Probability a received OBV course is
 #'   adhered to.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post challenge/exposure to first
-#'   dose.
+#'   dose, evaluated at each candidate's own absolute infection time. With
+#'   `obv_pep_dpc_shape = NULL` this is each recipient's DPC exactly; with a shape it is the
+#'   *mean* DPC, so the average treatment delay can vary over calendar time while the
+#'   efficacy(DPC) relationship stays fixed.
+#' @param obv_pep_dpc_shape NULL or a single positive numeric. NULL (default) keeps DPC
+#'   deterministic at `obv_pep_dpc` (bit-for-bit identical to pre-feature runs). If supplied,
+#'   each recipient draws an independent DPC from `Gamma(shape = obv_pep_dpc_shape,
+#'   scale = obv_pep_dpc(t) / obv_pep_dpc_shape)` -- mean `obv_pep_dpc(t)`, variance
+#'   `obv_pep_dpc(t)^2 / obv_pep_dpc_shape` (`CV = 1/sqrt(shape)`) -- giving individual
+#'   variation in how quickly the drug is received post-exposure.
 #' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). OBV efficacy; NULL uses
 #'   [obv_pep_efficacy_from_dpc()].
 #' @param obv_pep_target_class Character vector. Offspring classes eligible for OBV PEP (default
@@ -219,7 +228,8 @@ branching_process_main <- function(
   obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate
   obv_pep_coverage = 0,                  # scalar/function(t): probability eligible candidate receives OBV
   obv_pep_adherence = 1,                     # scalar/function(t): probability received course is effectively adhered to
-  obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose
+  obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose (mean DPC when a shape is set)
+  obv_pep_dpc_shape = NULL,                  # NULL = deterministic DPC; positive scalar = per-recipient Gamma(mean = obv_pep_dpc(t), shape) draw
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
   obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
   obv_pep_target_locations = "hospital",     # character vector: exposure settings eligible for OBV PEP
@@ -380,6 +390,15 @@ branching_process_main <- function(
 
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
   check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")
+
+  ## obv_pep_dpc_shape (optional): when set, DPC is drawn per-recipient from a Gamma with
+  ## mean obv_pep_dpc(t) and this fixed shape; NULL keeps DPC deterministic. Fail fast here
+  ## rather than per-parent inside the gate.
+  if (!is.null(obv_pep_dpc_shape) &&
+      (!is.numeric(obv_pep_dpc_shape) || length(obv_pep_dpc_shape) != 1L ||
+       !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
+    stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
+  }
 
   ## prob_death_hosp must not exceed prob_death_comm (so second_chance_death_prob <= 1).
   ## Currently both are scalars; if they become time-varying in future, this still
@@ -622,6 +641,7 @@ branching_process_main <- function(
                                                                      obv_pep_coverage = obv_pep_coverage,
                                                                      obv_pep_adherence = obv_pep_adherence,
                                                                      obv_pep_dpc = obv_pep_dpc,
+                                                                     obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                                      obv_pep_efficacy = obv_pep_efficacy,
                                                                      obv_pep_target_class = obv_pep_target_class,
                                                                      obv_pep_target_locations = obv_pep_target_locations,
@@ -649,6 +669,7 @@ branching_process_main <- function(
                                                                   obv_pep_coverage = obv_pep_coverage,
                                                                   obv_pep_adherence = obv_pep_adherence,
                                                                   obv_pep_dpc = obv_pep_dpc,
+                                                                  obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                                   obv_pep_efficacy = obv_pep_efficacy,
                                                                   obv_pep_target_class = obv_pep_target_class,
                                                                   obv_pep_target_locations = obv_pep_target_locations,
@@ -687,6 +708,7 @@ branching_process_main <- function(
                                                        obv_pep_coverage = obv_pep_coverage,
                                                        obv_pep_adherence = obv_pep_adherence,
                                                        obv_pep_dpc = obv_pep_dpc,
+                                                       obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                        obv_pep_efficacy = obv_pep_efficacy,
                                                        obv_pep_target_class = obv_pep_target_class,
                                                        obv_pep_target_locations = obv_pep_target_locations,
