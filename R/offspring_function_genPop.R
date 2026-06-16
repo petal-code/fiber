@@ -49,11 +49,12 @@
 #'   adheres sufficiently for efficacy to apply.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post challenge/exposure to first
 #'   dose. The simplest working assumption is \code{obv_pep_dpc = 1}. When
-#'   \code{obv_pep_dpc_shape} is set this is the \emph{mean} of the per-recipient DPC draw.
-#' @param obv_pep_dpc_shape NULL or a single positive numeric. NULL (default) keeps DPC
-#'   deterministic at \code{obv_pep_dpc}; if set, each recipient's DPC is drawn from a Gamma
-#'   with mean \code{obv_pep_dpc(t)} and this fixed shape, adding individual variation in
-#'   time-to-treatment. See \code{apply_obv_pep_gate()}.
+#'   \code{obv_pep_dpc_sd} is set this is the \emph{mean} of the per-recipient DPC draw.
+#' @param obv_pep_dpc_sd NULL or a single positive numeric. NULL (default) keeps DPC
+#'   deterministic at \code{obv_pep_dpc}; if set, it is the standard deviation of each
+#'   recipient's DPC, drawn from a Gamma with mean \code{obv_pep_dpc(t)} and this fixed sd
+#'   (a fixed absolute spread), adding individual variation in time-to-treatment. See
+#'   \code{apply_obv_pep_gate()}.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). NULL or a scalar use the
 #'   built-in \code{obv_pep_efficacy_from_dpc()} curve (flat by default; a scalar is the constant
 #'   efficacy / \code{E0}); a function(dpc) is used as-is. See \code{apply_obv_pep_gate()}.
@@ -96,7 +97,7 @@ offspring_function_genPop <- function(
   obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
-  obv_pep_dpc_shape = NULL,
+  obv_pep_dpc_sd = NULL,
   obv_pep_efficacy = NULL,
   obv_pep_efficacy_args = NULL,
   obv_pep_target_class = "HCW",
@@ -315,7 +316,7 @@ offspring_function_genPop <- function(
     obv_pep_coverage     = obv_pep_coverage,
     obv_pep_adherence        = obv_pep_adherence,
     obv_pep_dpc              = obv_pep_dpc,
-    obv_pep_dpc_shape        = obv_pep_dpc_shape,
+    obv_pep_dpc_sd           = obv_pep_dpc_sd,
     obv_pep_efficacy         = obv_pep_efficacy,
     obv_pep_efficacy_args    = obv_pep_efficacy_args,
     obv_pep_target_class     = obv_pep_target_class,

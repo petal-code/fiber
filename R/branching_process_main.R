@@ -98,15 +98,18 @@
 #'   adhered to.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post challenge/exposure to first
 #'   dose, evaluated at each candidate's own absolute infection time. With
-#'   `obv_pep_dpc_shape = NULL` this is each recipient's DPC exactly; with a shape it is the
+#'   `obv_pep_dpc_sd = NULL` this is each recipient's DPC exactly; with an sd it is the
 #'   *mean* DPC, so the average treatment delay can vary over calendar time while the
 #'   efficacy(DPC) relationship stays fixed.
-#' @param obv_pep_dpc_shape NULL or a single positive numeric. NULL (default) keeps DPC
+#' @param obv_pep_dpc_sd NULL or a single positive numeric. NULL (default) keeps DPC
 #'   deterministic at `obv_pep_dpc` (bit-for-bit identical to pre-feature runs). If supplied,
-#'   each recipient draws an independent DPC from `Gamma(shape = obv_pep_dpc_shape,
-#'   scale = obv_pep_dpc(t) / obv_pep_dpc_shape)` -- mean `obv_pep_dpc(t)`, variance
-#'   `obv_pep_dpc(t)^2 / obv_pep_dpc_shape` (`CV = 1/sqrt(shape)`) -- giving individual
-#'   variation in how quickly the drug is received post-exposure.
+#'   it is the standard deviation of the per-recipient DPC: each recipient draws an independent
+#'   DPC from a Gamma reparameterised from (mean, sd) as
+#'   `Gamma(shape = obv_pep_dpc(t)^2 / obv_pep_dpc_sd^2, scale = obv_pep_dpc_sd^2 / obv_pep_dpc(t))`
+#'   -- mean `obv_pep_dpc(t)`, variance `obv_pep_dpc_sd^2` (`CV = obv_pep_dpc_sd / obv_pep_dpc(t)`)
+#'   -- giving individual variation in how quickly the drug is received post-exposure. The spread
+#'   is a fixed absolute sd even when the mean varies over time (a fixed shape would instead hold
+#'   the CV constant).
 #' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). Selects the efficacy model.
 #'   NULL or a scalar use the built-in [obv_pep_efficacy_from_dpc()] curve, which is **flat** by
 #'   default (constant efficacy at every DPC); a *scalar* is taken as that constant (the curve's
@@ -237,8 +240,8 @@ branching_process_main <- function(
   obv_pep_enabled = FALSE,                   # logical: apply OBV infection-prevention gate
   obv_pep_coverage = 0,                  # scalar/function(t): probability eligible candidate receives OBV
   obv_pep_adherence = 1,                     # scalar/function(t): probability received course is effectively adhered to
-  obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose (mean DPC when a shape is set)
-  obv_pep_dpc_shape = NULL,                  # NULL = deterministic DPC; positive scalar = per-recipient Gamma(mean = obv_pep_dpc(t), shape) draw
+  obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose (mean DPC when an sd is set)
+  obv_pep_dpc_sd = NULL,                     # NULL = deterministic DPC; positive scalar = per-recipient Gamma(mean = obv_pep_dpc(t), sd) draw
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
   obv_pep_efficacy_args = NULL,              # NULL or named list of overrides for obv_pep_efficacy_from_dpc() (E0/d50/k/dpc_zero/max_dpc); used only when obv_pep_efficacy = NULL
   obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
@@ -401,13 +404,13 @@ branching_process_main <- function(
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
   check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")
 
-  ## obv_pep_dpc_shape (optional): when set, DPC is drawn per-recipient from a Gamma with
-  ## mean obv_pep_dpc(t) and this fixed shape; NULL keeps DPC deterministic. Fail fast here
-  ## rather than per-parent inside the gate.
-  if (!is.null(obv_pep_dpc_shape) &&
-      (!is.numeric(obv_pep_dpc_shape) || length(obv_pep_dpc_shape) != 1L ||
-       !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
-    stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
+  ## obv_pep_dpc_sd (optional): when set, DPC is drawn per-recipient from a Gamma with
+  ## mean obv_pep_dpc(t) and this fixed standard deviation; NULL keeps DPC deterministic.
+  ## Fail fast here rather than per-parent inside the gate.
+  if (!is.null(obv_pep_dpc_sd) &&
+      (!is.numeric(obv_pep_dpc_sd) || length(obv_pep_dpc_sd) != 1L ||
+       !is.finite(obv_pep_dpc_sd) || obv_pep_dpc_sd <= 0)) {
+    stop("`obv_pep_dpc_sd` must be NULL or a single finite positive numeric.", call. = FALSE)
   }
 
   ## obv_pep_efficacy_args (optional): named overrides for the built-in efficacy curve. The curve
@@ -662,7 +665,7 @@ branching_process_main <- function(
                                                                      obv_pep_coverage = obv_pep_coverage,
                                                                      obv_pep_adherence = obv_pep_adherence,
                                                                      obv_pep_dpc = obv_pep_dpc,
-                                                                     obv_pep_dpc_shape = obv_pep_dpc_shape,
+                                                                     obv_pep_dpc_sd = obv_pep_dpc_sd,
                                                                      obv_pep_efficacy = obv_pep_efficacy,
                                                                      obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                                      obv_pep_target_class = obv_pep_target_class,
@@ -691,7 +694,7 @@ branching_process_main <- function(
                                                                   obv_pep_coverage = obv_pep_coverage,
                                                                   obv_pep_adherence = obv_pep_adherence,
                                                                   obv_pep_dpc = obv_pep_dpc,
-                                                                  obv_pep_dpc_shape = obv_pep_dpc_shape,
+                                                                  obv_pep_dpc_sd = obv_pep_dpc_sd,
                                                                   obv_pep_efficacy = obv_pep_efficacy,
                                                                   obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                                   obv_pep_target_class = obv_pep_target_class,
@@ -731,7 +734,7 @@ branching_process_main <- function(
                                                        obv_pep_coverage = obv_pep_coverage,
                                                        obv_pep_adherence = obv_pep_adherence,
                                                        obv_pep_dpc = obv_pep_dpc,
-                                                       obv_pep_dpc_shape = obv_pep_dpc_shape,
+                                                       obv_pep_dpc_sd = obv_pep_dpc_sd,
                                                        obv_pep_efficacy = obv_pep_efficacy,
                                                        obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                        obv_pep_target_class = obv_pep_target_class,

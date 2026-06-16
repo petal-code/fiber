@@ -388,7 +388,7 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = 
 #'     \code{obv_pep_target_locations}. For each pre-thinning eligible
 #'     candidate, the gate draws a treatment status (received OBV, adherent to
 #'     the course) and a days-post-challenge value -- the latter either the
-#'     deterministic \code{obv_pep_dpc} mean or, when \code{obv_pep_dpc_shape} is
+#'     deterministic \code{obv_pep_dpc} mean or, when \code{obv_pep_dpc_sd} is
 #'     set, an independent Gamma draw with that mean (so individuals vary in how
 #'     quickly they are dosed). The pre-thinning counters record the size of the
 #'     "treat-all-contacts" cohort.
@@ -427,21 +427,25 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = 
 #' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability a
 #'   recipient adheres sufficiently for efficacy to apply.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post
-#'   challenge / exposure to first dose. When \code{obv_pep_dpc_shape} is NULL
-#'   this value is used directly as each recipient's DPC; when a shape is
+#'   challenge / exposure to first dose. When \code{obv_pep_dpc_sd} is NULL
+#'   this value is used directly as each recipient's DPC; when an sd is
 #'   supplied it is the \emph{mean} of the per-recipient Gamma draw. Evaluated at
 #'   the candidate's own absolute infection time, so the \emph{mean} delay may
 #'   itself vary over calendar time while the efficacy(DPC) relationship stays
 #'   fixed.
-#' @param obv_pep_dpc_shape NULL or a single finite positive numeric. If NULL
+#' @param obv_pep_dpc_sd NULL or a single finite positive numeric. If NULL
 #'   (default), DPC is deterministic and equal to \code{obv_pep_dpc} (identical
-#'   RNG stream to pre-feature runs). If supplied, each recipient's DPC is drawn
-#'   independently from \code{Gamma(shape = obv_pep_dpc_shape,
-#'   scale = obv_pep_dpc(t) / obv_pep_dpc_shape)}, which has mean
-#'   \code{obv_pep_dpc(t)} and variance \code{obv_pep_dpc(t)^2 / obv_pep_dpc_shape}
-#'   (so larger shape = tighter spread; \code{CV = 1/sqrt(shape)}). This models
-#'   individual variation in how quickly the drug is received post-exposure. A
-#'   mean of 0 yields a point mass at DPC 0.
+#'   RNG stream to pre-feature runs). If supplied, it is the standard deviation
+#'   of the per-recipient DPC: each recipient's DPC is drawn independently from a
+#'   Gamma reparameterised from (mean, sd) as
+#'   \code{Gamma(shape = obv_pep_dpc(t)^2 / obv_pep_dpc_sd^2,
+#'   scale = obv_pep_dpc_sd^2 / obv_pep_dpc(t))}, which has mean
+#'   \code{obv_pep_dpc(t)} and variance \code{obv_pep_dpc_sd^2}
+#'   (so smaller sd = tighter spread; \code{CV = obv_pep_dpc_sd / obv_pep_dpc(t)}).
+#'   The spread is therefore a \emph{fixed absolute} sd even when the mean varies
+#'   over calendar time (unlike a fixed shape, which would hold the CV constant).
+#'   This models individual variation in how quickly the drug is received
+#'   post-exposure. A mean of 0 yields a point mass at DPC 0.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc).
 #'   Selects the efficacy model. NULL or a scalar use the built-in
 #'   \code{obv_pep_efficacy_from_dpc()} curve, which is \emph{flat} by default
@@ -487,7 +491,7 @@ apply_obv_pep_gate <- function(pre_thinning,
                                obv_pep_coverage = 0,
                                obv_pep_adherence = 1,
                                obv_pep_dpc = 1,
-                               obv_pep_dpc_shape = NULL,
+                               obv_pep_dpc_sd = NULL,
                                obv_pep_efficacy = NULL,
                                obv_pep_efficacy_args = NULL,
                                obv_pep_target_class = "HCW",
@@ -573,10 +577,10 @@ apply_obv_pep_gate <- function(pre_thinning,
   validate_probability_or_time_varying(obv_pep_coverage, "obv_pep_coverage")
   validate_probability_or_time_varying(obv_pep_adherence, "obv_pep_adherence")
   validate_nonnegative_or_time_varying(obv_pep_dpc, "obv_pep_dpc")
-  if (!is.null(obv_pep_dpc_shape) &&
-      (!is.numeric(obv_pep_dpc_shape) || length(obv_pep_dpc_shape) != 1L ||
-       !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
-    stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
+  if (!is.null(obv_pep_dpc_sd) &&
+      (!is.numeric(obv_pep_dpc_sd) || length(obv_pep_dpc_sd) != 1L ||
+       !is.finite(obv_pep_dpc_sd) || obv_pep_dpc_sd <= 0)) {
+    stop("`obv_pep_dpc_sd` must be NULL or a single finite positive numeric.", call. = FALSE)
   }
   validate_obv_efficacy_args(obv_pep_efficacy, obv_pep_efficacy_args)
 
@@ -624,27 +628,36 @@ apply_obv_pep_gate <- function(pre_thinning,
       num_treated$pre_adherent <- sum(pre_adherent)
 
       ## obv_pep_dpc(t) gives the MEAN days-post-challenge for a candidate
-      ## infected at calendar time t. With obv_pep_dpc_shape = NULL the DPC is
+      ## infected at calendar time t. With obv_pep_dpc_sd = NULL the DPC is
       ## that mean exactly (deterministic; same RNG stream as pre-feature runs).
       ## Otherwise each recipient draws its own DPC from a Gamma with that mean
-      ## and the supplied fixed shape -- Gamma(shape = k, scale = mean / k) has
-      ## mean `mean` and variance mean^2 / k -- so individuals vary in how quickly
+      ## and the supplied fixed standard deviation. The Gamma is reparameterised
+      ## from (mean, sd) to (shape, scale) via shape = mean^2 / sd^2 and
+      ## scale = sd^2 / mean, so the draw has mean `mean` and a constant absolute
+      ## variance sd^2 (i.e. CV = sd / mean) -- individuals vary in how quickly
       ## they receive the drug post-exposure. This per-individual draw IS the
-      ## realised (receipt - infection) delay. A mean of 0 gives a point mass at 0
-      ## (rgamma returns 0 for scale 0), so same-day dosing stays exact.
+      ## realised (receipt - infection) delay. A mean of 0 has no positive-sd
+      ## Gamma (a non-negative variable with mean 0 is 0 a.s.), so it degenerates
+      ## to a point mass at DPC 0; guard it to avoid the shape = 0 / scale = Inf
+      ## edge in rgamma() and keep same-day dosing exact.
       dpc_mean <- resolve_nonnegative(
         obv_pep_dpc,
         pre_thinning$infection_time_absolute[pre_received_idx],
         "obv_pep_dpc"
       )
-      if (is.null(obv_pep_dpc_shape)) {
+      if (is.null(obv_pep_dpc_sd)) {
         status_dpc[pre_received_idx] <- dpc_mean
       } else {
-        status_dpc[pre_received_idx] <- rgamma(
-          n     = length(dpc_mean),
-          shape = obv_pep_dpc_shape,
-          scale = dpc_mean / obv_pep_dpc_shape
-        )
+        drawn_dpc <- numeric(length(dpc_mean))
+        positive  <- dpc_mean > 0
+        if (any(positive)) {
+          drawn_dpc[positive] <- rgamma(
+            n     = sum(positive),
+            shape = dpc_mean[positive]^2 / obv_pep_dpc_sd^2,
+            scale = obv_pep_dpc_sd^2 / dpc_mean[positive]
+          )
+        }
+        status_dpc[pre_received_idx] <- drawn_dpc
       }
     }
   }
