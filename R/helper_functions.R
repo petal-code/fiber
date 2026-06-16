@@ -118,25 +118,37 @@ check_nonneg_on_grid <- function(param, grid, param_name) {
 
 #' Obeldesivir PEP efficacy as a function of days post challenge/exposure
 #'
-#' This helper implements the current NHP-derived working curve used for the
-#' first OBV/ODV branch. The defaults are the maximum-likelihood estimates from
-#' `ODV_PEP_plot1_only_with_ribbon_GOF.R` using the scaled logistic model with
-#' `dpc_zero = 15` and `k = 1`. For this model branch, efficacy is set to zero
-#' after `max_dpc = 10`, so the fitted line is intentionally cut at 10 DPC.
+#' Returns OBV PEP efficacy for each DPC value. By default (\code{shape = "flat"})
+#' efficacy is \emph{constant} at \code{E0} for every DPC -- a deliberately
+#' model-neutral default, since the DPC-to-efficacy relationship is not yet
+#' pinned down and the previous logistic constants were placeholders. Set
+#' \code{shape = "logistic"} to use the NHP-derived scaled-logistic decay
+#' (efficacy \code{E0} at DPC 0, falling to 0 by \code{dpc_zero} and forced to 0
+#' beyond \code{max_dpc}); its default \code{d50}/\code{k}/\code{dpc_zero}/
+#' \code{max_dpc} are the maximum-likelihood estimates from
+#' \code{ODV_PEP_plot1_only_with_ribbon_GOF.R}. The curve is separable in
+#' \code{E0}: \code{eff(dpc) = E0 * shape(dpc)} with \code{shape(0) = 1}, so
+#' \code{E0} is a pure vertical scale equal to the peak (DPC 0) efficacy.
 #'
 #' @param dpc Numeric vector. Days post challenge/exposure at which OBV is first
 #'   received.
-#' @param E0 Fitted efficacy at DPC 0 on the hazard scale.
-#' @param d50 Fitted logistic midpoint.
-#' @param k Fixed logistic steepness.
-#' @param dpc_zero DPC at which efficacy is forced to zero in the underlying fit.
+#' @param E0 Efficacy at DPC 0 (the peak). For \code{shape = "flat"} this is the
+#'   efficacy at \emph{every} DPC.
+#' @param shape Character: \code{"flat"} (default; constant \code{E0}) or
+#'   \code{"logistic"} (NHP-style decay using \code{d50}, \code{k},
+#'   \code{dpc_zero}, \code{max_dpc}).
+#' @param d50 Fitted logistic midpoint (used when \code{shape = "logistic"}).
+#' @param k Fixed logistic steepness (used when \code{shape = "logistic"}).
+#' @param dpc_zero DPC at which efficacy is forced to zero in the underlying fit
+#'   (used when \code{shape = "logistic"}).
 #' @param max_dpc Maximum DPC retained in this model branch; later dosing is
-#'   assigned zero efficacy.
+#'   assigned zero efficacy (used when \code{shape = "logistic"}).
 #'
 #' @return Numeric vector of efficacy values between 0 and 1.
 #' @export
 obv_pep_efficacy_from_dpc <- function(dpc,
                                       E0 = 0.82342697,
+                                      shape = c("flat", "logistic"),
                                       d50 = 5.59722823,
                                       k = 1,
                                       dpc_zero = 15,
@@ -153,14 +165,28 @@ obv_pep_efficacy_from_dpc <- function(dpc,
   if (any(dpc < 0)) {
     stop("`dpc` must be non-negative.", call. = FALSE)
   }
-  for (nm in c("E0", "d50", "k", "dpc_zero", "max_dpc")) {
+  shape <- match.arg(shape)
+
+  if (!is.numeric(E0) || length(E0) != 1L || is.na(E0) || !is.finite(E0)) {
+    stop("`E0` must be a single finite numeric value.", call. = FALSE)
+  }
+  if (E0 < 0 || E0 > 1) {
+    stop("`E0` must be in [0, 1].", call. = FALSE)
+  }
+
+  ## Default model: flat efficacy -- E0 at every DPC, no decay. The NHP-style
+  ## logistic decay is opt-in (shape = "logistic"); the normalised logistic
+  ## cannot be made flat by any choice of d50/k/dpc_zero (as k -> 0 it tends to a
+  ## LINEAR decay to 0 at dpc_zero, not a flat line), so flat is a distinct mode.
+  if (shape == "flat") {
+    return(rep(E0, length(dpc)))
+  }
+
+  for (nm in c("d50", "k", "dpc_zero", "max_dpc")) {
     val <- get(nm, inherits = FALSE)
     if (!is.numeric(val) || length(val) != 1L || is.na(val) || !is.finite(val)) {
       stop(sprintf("`%s` must be a single finite numeric value.", nm), call. = FALSE)
     }
-  }
-  if (E0 < 0 || E0 > 1) {
-    stop("`E0` must be in [0, 1].", call. = FALSE)
   }
   if (dpc_zero <= 0 || max_dpc < 0) {
     stop("`dpc_zero` must be positive and `max_dpc` must be non-negative.", call. = FALSE)
@@ -417,20 +443,20 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = 
 #'   individual variation in how quickly the drug is received post-exposure. A
 #'   mean of 0 yields a point mass at DPC 0.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc).
-#'   Selects the efficacy model. NULL or a scalar use the NHP-derived
-#'   \code{obv_pep_efficacy_from_dpc()} curve; a \emph{scalar} is taken as the
-#'   curve's \code{E0} (peak efficacy at DPC 0), since \code{E0} is a pure
-#'   vertical scale on a fixed shape. A function(dpc) is used as-is (e.g.
-#'   \code{function(dpc) rep(0.5, length(dpc))} for a flat, DPC-independent
-#'   efficacy).
-#' @param obv_pep_efficacy_args NULL or a named list of shape overrides for
-#'   \code{obv_pep_efficacy_from_dpc()} (\code{E0}, \code{d50}, \code{k},
-#'   \code{dpc_zero}, \code{max_dpc}). Applies to the built-in curve only (i.e.
-#'   when \code{obv_pep_efficacy} is NULL or a scalar), so a caller can sweep the
-#'   curve's shape without writing a closure. Errors if combined with a function
-#'   \code{obv_pep_efficacy}, if it names \code{E0} while \code{obv_pep_efficacy}
-#'   is a scalar (E0 then comes from \code{obv_pep_efficacy}), or given an
-#'   unknown name.
+#'   Selects the efficacy model. NULL or a scalar use the built-in
+#'   \code{obv_pep_efficacy_from_dpc()} curve, which is \emph{flat} by default
+#'   (constant efficacy at every DPC); a \emph{scalar} is taken as that constant
+#'   (the curve's \code{E0}). DPC-dependent decay is opt-in via
+#'   \code{obv_pep_efficacy_args} (\code{shape = "logistic"}). A function(dpc) is
+#'   used as-is.
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for the
+#'   built-in \code{obv_pep_efficacy_from_dpc()} curve -- any of \code{shape},
+#'   \code{E0}, \code{d50}, \code{k}, \code{dpc_zero}, \code{max_dpc}. Applies to
+#'   the built-in curve only (when \code{obv_pep_efficacy} is NULL or a scalar);
+#'   e.g. \code{list(shape = "logistic", d50 = 4)} switches on the logistic decay.
+#'   Errors if combined with a function \code{obv_pep_efficacy}, if it names
+#'   \code{E0} while \code{obv_pep_efficacy} is a scalar (E0 then comes from
+#'   \code{obv_pep_efficacy}), or given an unknown name.
 #' @param obv_pep_target_class Character vector of offspring classes eligible
 #'   for OBV PEP. Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure locations

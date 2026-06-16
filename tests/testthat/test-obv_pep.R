@@ -276,28 +276,45 @@ test_that("prevented_completed is NULL when OBV prevents nothing", {
   expect_null(res$prevented_completed)
 })
 
-## --- obv_pep_efficacy_from_dpc boundaries ------------------------------
+## --- obv_pep_efficacy_from_dpc: flat default ---------------------------
+
+test_that("obv_pep_efficacy_from_dpc is flat (constant E0) by default", {
+  dpc <- c(0, 2, 5, 10, 15, 30, 100)
+  expect_equal(obv_pep_efficacy_from_dpc(dpc, E0 = 0.7), rep(0.7, length(dpc)))
+  ## shape = "flat" is the explicit default; cutoffs do not apply in flat mode.
+  expect_equal(obv_pep_efficacy_from_dpc(dpc, E0 = 0.7, shape = "flat"), rep(0.7, length(dpc)))
+  ## Default E0 at any DPC equals the dpc = 0 value (no decay).
+  expect_equal(obv_pep_efficacy_from_dpc(c(0, 50)), rep(obv_pep_efficacy_from_dpc(0), 2))
+})
+
+test_that("obv_pep_efficacy_from_dpc rejects an unknown shape", {
+  expect_error(obv_pep_efficacy_from_dpc(0, shape = "sigmoid"))
+})
+
+## --- obv_pep_efficacy_from_dpc: logistic boundaries (shape = "logistic") ---
 
 test_that("obv_pep_efficacy_from_dpc returns E0 at dpc = 0", {
+  ## True for both modes; the dpc = 0 value is the peak / the flat constant.
   expect_equal(obv_pep_efficacy_from_dpc(0), 0.82342697, tolerance = 1e-6)
+  expect_equal(obv_pep_efficacy_from_dpc(0, shape = "logistic"), 0.82342697, tolerance = 1e-6)
 })
 
-test_that("obv_pep_efficacy_from_dpc is 0 at dpc_zero = 15", {
-  expect_equal(obv_pep_efficacy_from_dpc(15), 0)
+test_that("obv_pep_efficacy_from_dpc (logistic) is 0 at dpc_zero = 15", {
+  expect_equal(obv_pep_efficacy_from_dpc(15, shape = "logistic"), 0)
 })
 
-test_that("obv_pep_efficacy_from_dpc is 0 just past max_dpc = 10", {
-  expect_equal(obv_pep_efficacy_from_dpc(10.01), 0)
+test_that("obv_pep_efficacy_from_dpc (logistic) is 0 just past max_dpc = 10", {
+  expect_equal(obv_pep_efficacy_from_dpc(10.01, shape = "logistic"), 0)
 })
 
-test_that("obv_pep_efficacy_from_dpc is in [0, 1] across a sensible range", {
-  vals <- obv_pep_efficacy_from_dpc(seq(0, 20, by = 0.5))
+test_that("obv_pep_efficacy_from_dpc (logistic) is in [0, 1] across a sensible range", {
+  vals <- obv_pep_efficacy_from_dpc(seq(0, 20, by = 0.5), shape = "logistic")
   expect_true(all(vals >= 0 & vals <= 1))
 })
 
-test_that("obv_pep_efficacy_from_dpc is monotone non-increasing on [0, 15]", {
+test_that("obv_pep_efficacy_from_dpc (logistic) is monotone non-increasing on [0, 15]", {
   dpc <- seq(0, 15, by = 0.5)
-  vals <- obv_pep_efficacy_from_dpc(dpc)
+  vals <- obv_pep_efficacy_from_dpc(dpc, shape = "logistic")
   expect_true(all(diff(vals) <= 1e-10))
 })
 
@@ -703,12 +720,16 @@ test_that("stochastic DPC flows through branching_process_main: varying, finite,
 
 test_that("resolve_obv_efficacy applies obv_pep_efficacy_args to the built-in curve", {
   dpc <- c(0, 2, 5, 8, 12)
-  ## Overrides are forwarded verbatim to obv_pep_efficacy_from_dpc().
-  expect_equal(resolve_obv_efficacy(NULL, dpc, list(E0 = 0.6, d50 = 4)),
-               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, d50 = 4))
-  ## NULL or empty list reproduces the curve defaults exactly.
+  ## Overrides are forwarded verbatim, including the shape switch that turns on decay.
+  expect_equal(resolve_obv_efficacy(NULL, dpc, list(shape = "logistic", E0 = 0.6, d50 = 4)),
+               obv_pep_efficacy_from_dpc(dpc, shape = "logistic", E0 = 0.6, d50 = 4))
+  ## NULL or empty list reproduces the (flat) curve defaults exactly.
   expect_equal(resolve_obv_efficacy(NULL, dpc, NULL),   obv_pep_efficacy_from_dpc(dpc))
   expect_equal(resolve_obv_efficacy(NULL, dpc, list()), obv_pep_efficacy_from_dpc(dpc))
+  ## Default (no shape) is flat, so the shape override genuinely changes the result.
+  expect_false(isTRUE(all.equal(
+    resolve_obv_efficacy(NULL, dpc, list(E0 = 0.6)),
+    resolve_obv_efficacy(NULL, dpc, list(shape = "logistic", E0 = 0.6)))))
 })
 
 test_that("obv_pep_efficacy_args validation catches misuse", {
@@ -739,17 +760,18 @@ test_that("bad curve values surface through resolve_obv_efficacy", {
   expect_error(resolve_obv_efficacy(NULL, 0, list(E0 = 1.5)), "E0")
 })
 
-test_that("scalar obv_pep_efficacy is used as the curve's E0 (peak at DPC 0)", {
+test_that("scalar obv_pep_efficacy is used as the curve's E0 (flat by default)", {
   dpc <- c(0, 2, 5, 8, 12)
-  ## Scalar efficacy == E0 of the built-in curve; shape from args or defaults.
-  expect_equal(resolve_obv_efficacy(0.6, dpc),
-               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6))
-  expect_equal(resolve_obv_efficacy(0.6, dpc, list(d50 = 4, k = 2)),
-               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, d50 = 4, k = 2))
-  ## At DPC 0 the curve equals E0 exactly (peak efficacy).
-  expect_equal(resolve_obv_efficacy(0.7, 0), 0.7)
-  ## E0 is a pure vertical scale: halving E0 halves the whole curve.
-  expect_equal(resolve_obv_efficacy(0.5, dpc), 0.5 * resolve_obv_efficacy(1, dpc))
+  ## A bare scalar is E0 of the built-in curve, which is flat by default:
+  ## efficacy = the scalar at every DPC.
+  expect_equal(resolve_obv_efficacy(0.6, dpc), rep(0.6, length(dpc)))
+  expect_equal(resolve_obv_efficacy(0.6, dpc), obv_pep_efficacy_from_dpc(dpc, E0 = 0.6))
+  ## With shape = "logistic" the scalar E0 feeds the decaying curve.
+  expect_equal(resolve_obv_efficacy(0.6, dpc, list(shape = "logistic", d50 = 4, k = 2)),
+               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, shape = "logistic", d50 = 4, k = 2))
+  ## E0 is a pure vertical scale: halving E0 halves the whole curve (logistic too).
+  expect_equal(resolve_obv_efficacy(0.5, dpc, list(shape = "logistic")),
+               0.5 * resolve_obv_efficacy(1, dpc, list(shape = "logistic")))
   ## A bad scalar E0 is rejected by the curve's own validation.
   expect_error(resolve_obv_efficacy(1.5, 0), "E0")
 })

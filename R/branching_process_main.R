@@ -108,14 +108,14 @@
 #'   `obv_pep_dpc(t)^2 / obv_pep_dpc_shape` (`CV = 1/sqrt(shape)`) -- giving individual
 #'   variation in how quickly the drug is received post-exposure.
 #' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). Selects the efficacy model.
-#'   NULL or a scalar use the built-in [obv_pep_efficacy_from_dpc()] curve; a *scalar* is taken as
-#'   the curve's `E0` (peak efficacy at DPC 0), since `E0` is a pure vertical scale on a fixed shape.
-#'   A function(dpc) is used as-is (e.g. `function(dpc) rep(0.5, length(dpc))` for a flat,
-#'   DPC-independent efficacy).
-#' @param obv_pep_efficacy_args NULL or a named list of shape overrides for the built-in efficacy
-#'   curve [obv_pep_efficacy_from_dpc()] -- any of `E0`, `d50`, `k`, `dpc_zero`, `max_dpc`. Applies
-#'   to the built-in curve only (i.e. when `obv_pep_efficacy` is NULL or a scalar), so you can sweep
-#'   the shape (e.g. `obv_pep_efficacy_args = list(d50 = 4, k = 2)`) without writing a closure.
+#'   NULL or a scalar use the built-in [obv_pep_efficacy_from_dpc()] curve, which is **flat** by
+#'   default (constant efficacy at every DPC); a *scalar* is taken as that constant (the curve's
+#'   `E0`). DPC-dependent decay is opt-in via `obv_pep_efficacy_args` (`shape = "logistic"`). A
+#'   function(dpc) is used as-is (e.g. `function(dpc) rep(0.5, length(dpc))`).
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for the built-in efficacy curve
+#'   [obv_pep_efficacy_from_dpc()] -- any of `shape`, `E0`, `d50`, `k`, `dpc_zero`, `max_dpc`. Applies
+#'   to the built-in curve only (when `obv_pep_efficacy` is NULL or a scalar); e.g.
+#'   `obv_pep_efficacy_args = list(shape = "logistic", d50 = 4)` switches on the logistic decay.
 #'   Errors if combined with a function `obv_pep_efficacy`, if it names `E0` while `obv_pep_efficacy`
 #'   is a scalar (E0 then comes from `obv_pep_efficacy`), or given an unknown name.
 #' @param obv_pep_target_class Character vector. Offspring classes eligible for OBV PEP (default
