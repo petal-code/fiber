@@ -56,6 +56,9 @@
 #'   time-to-treatment. See \code{apply_obv_pep_gate()}.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
 #'   \code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for
+#'   \code{obv_pep_efficacy_from_dpc()} (e.g. \code{list(E0 = 0.9, d50 = 4)}), used only when
+#'   \code{obv_pep_efficacy} is NULL. See \code{apply_obv_pep_gate()}.
 #' @param obv_pep_target_class Character vector of offspring classes eligible for OBV PEP.
 #'   Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure settings eligible for OBV PEP.
@@ -94,6 +97,7 @@ offspring_function_genPop <- function(
   obv_pep_dpc = 1,
   obv_pep_dpc_shape = NULL,
   obv_pep_efficacy = NULL,
+  obv_pep_efficacy_args = NULL,
   obv_pep_target_class = "HCW",
   obv_pep_target_locations = "hospital",
   ## PPE worn by HCW recipients treating the hospitalised genPop parent
@@ -312,6 +316,7 @@ offspring_function_genPop <- function(
     obv_pep_dpc              = obv_pep_dpc,
     obv_pep_dpc_shape        = obv_pep_dpc_shape,
     obv_pep_efficacy         = obv_pep_efficacy,
+    obv_pep_efficacy_args    = obv_pep_efficacy_args,
     obv_pep_target_class     = obv_pep_target_class,
     obv_pep_target_locations = obv_pep_target_locations
   )

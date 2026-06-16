@@ -268,13 +268,54 @@ empty_offspring_dataframe <- function() {
   out
 }
 
-resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
+## Validate the optional override list for the built-in OBV efficacy curve
+## (obv_pep_efficacy_from_dpc). NULL or list() means "use the curve defaults".
+## Names must be a subset of the curve's tunable arguments; `dpc` is supplied by
+## the simulation and cannot be overridden. The list only applies when
+## obv_pep_efficacy is NULL (the built-in curve); supplying both a custom
+## obv_pep_efficacy AND a non-empty args list is contradictory and errors, so a
+## parameter sweep can never silently ignore the curve knobs it set.
+validate_obv_efficacy_args <- function(obv_pep_efficacy, obv_pep_efficacy_args) {
+  if (is.null(obv_pep_efficacy_args)) return(invisible(NULL))
+  if (!is.list(obv_pep_efficacy_args)) {
+    stop("`obv_pep_efficacy_args` must be NULL or a named list.", call. = FALSE)
+  }
+  if (length(obv_pep_efficacy_args) == 0L) return(invisible(NULL))
+  nm <- names(obv_pep_efficacy_args)
+  if (is.null(nm) || any(nm == "")) {
+    stop("`obv_pep_efficacy_args` must be a fully named list.", call. = FALSE)
+  }
+  if (anyDuplicated(nm)) {
+    stop("`obv_pep_efficacy_args` has duplicate names.", call. = FALSE)
+  }
+  allowed <- setdiff(names(formals(obv_pep_efficacy_from_dpc)), "dpc")
+  bad <- setdiff(nm, allowed)
+  if (length(bad)) {
+    stop(sprintf("`obv_pep_efficacy_args` has unknown argument(s): %s. Allowed: %s.",
+                 paste(bad, collapse = ", "), paste(allowed, collapse = ", ")),
+         call. = FALSE)
+  }
+  if (!is.null(obv_pep_efficacy)) {
+    stop("`obv_pep_efficacy_args` only applies when `obv_pep_efficacy = NULL` (the built-in curve). Set one or the other.",
+         call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = NULL) {
   if (length(dpc) == 0L) {
     return(numeric(0))
   }
 
   if (is.null(obv_pep_efficacy)) {
-    value <- obv_pep_efficacy_from_dpc(dpc)
+    ## Built-in NHP-derived curve, optionally with caller overrides for its
+    ## shape parameters (E0, d50, k, dpc_zero, max_dpc). obv_pep_efficacy_from_dpc
+    ## validates the supplied values (e.g. E0 in [0, 1]) and errors on bad ones.
+    value <- if (length(obv_pep_efficacy_args)) {
+      do.call(obv_pep_efficacy_from_dpc, c(list(dpc), obv_pep_efficacy_args))
+    } else {
+      obv_pep_efficacy_from_dpc(dpc)
+    }
   } else if (is.function(obv_pep_efficacy)) {
     value <- obv_pep_efficacy(dpc)
   } else {
@@ -366,6 +407,12 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #'   mean of 0 yields a point mass at DPC 0.
 #' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If
 #'   NULL, the NHP-derived \code{obv_pep_efficacy_from_dpc()} helper is used.
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for
+#'   \code{obv_pep_efficacy_from_dpc()} (\code{E0}, \code{d50}, \code{k},
+#'   \code{dpc_zero}, \code{max_dpc}), used only when \code{obv_pep_efficacy} is
+#'   NULL (the built-in curve). Lets a caller sweep the efficacy curve's shape
+#'   without writing a closure. Errors if combined with a non-NULL
+#'   \code{obv_pep_efficacy} or given an unknown name.
 #' @param obv_pep_target_class Character vector of offspring classes eligible
 #'   for OBV PEP. Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure locations
@@ -398,6 +445,7 @@ apply_obv_pep_gate <- function(pre_thinning,
                                obv_pep_dpc = 1,
                                obv_pep_dpc_shape = NULL,
                                obv_pep_efficacy = NULL,
+                               obv_pep_efficacy_args = NULL,
                                obv_pep_target_class = "HCW",
                                obv_pep_target_locations = "hospital") {
 
@@ -486,6 +534,7 @@ apply_obv_pep_gate <- function(pre_thinning,
        !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
     stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
   }
+  validate_obv_efficacy_args(obv_pep_efficacy, obv_pep_efficacy_args)
 
   ## --- Phase 1: pre-thinning eligibility, treatment status, DPC. ---
   ## Status vectors span the full pre-thinning set so they can be indexed by
@@ -572,7 +621,8 @@ apply_obv_pep_gate <- function(pre_thinning,
 
   if (any(kept_adherent)) {
     adh_local_idx <- which(kept_adherent)
-    efficacy_vals <- resolve_obv_efficacy(obv_pep_efficacy, kept_dpc[adh_local_idx])
+    efficacy_vals <- resolve_obv_efficacy(obv_pep_efficacy, kept_dpc[adh_local_idx],
+                                          obv_pep_efficacy_args = obv_pep_efficacy_args)
     prevented <- as.logical(rbinom(n = length(adh_local_idx), size = 1, prob = efficacy_vals))
     keep[adh_local_idx[prevented]] <- FALSE
     num_treated$prevented <- sum(prevented)

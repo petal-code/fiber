@@ -45,6 +45,7 @@ branching_process_main(
   obv_pep_dpc = 1,
   obv_pep_dpc_shape = NULL,
   obv_pep_efficacy = NULL,
+  obv_pep_efficacy_args = NULL,
   obv_pep_target_class = "HCW",
   obv_pep_target_locations = "hospital",
   p_unsafe_funeral_comm_hcw = NULL,
@@ -188,6 +189,12 @@ variation in how quickly the drug is received post-exposure.}
 
 \item{obv_pep_efficacy}{NULL, numeric in \verb{[0, 1]}, or function(dpc). OBV efficacy; NULL uses
 \code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}}.}
+
+\item{obv_pep_efficacy_args}{NULL or a named list of overrides for the built-in efficacy curve
+\code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}} -- any of \code{E0}, \code{d50}, \code{k}, \code{dpc_zero}, \code{max_dpc}. Used only when
+\code{obv_pep_efficacy = NULL}, so you can sweep the curve's shape (e.g.
+\code{obv_pep_efficacy_args = list(E0 = 0.9, d50 = 4)}) without writing a closure. Errors if combined
+with a non-NULL \code{obv_pep_efficacy} or given an unknown name.}
 
 \item{obv_pep_target_class}{Character vector. Offspring classes eligible for OBV PEP (default
 "HCW").}

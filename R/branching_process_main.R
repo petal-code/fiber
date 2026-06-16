@@ -109,6 +109,11 @@
 #'   variation in how quickly the drug is received post-exposure.
 #' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). OBV efficacy; NULL uses
 #'   [obv_pep_efficacy_from_dpc()].
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for the built-in efficacy curve
+#'   [obv_pep_efficacy_from_dpc()] -- any of `E0`, `d50`, `k`, `dpc_zero`, `max_dpc`. Used only when
+#'   `obv_pep_efficacy = NULL`, so you can sweep the curve's shape (e.g.
+#'   `obv_pep_efficacy_args = list(E0 = 0.9, d50 = 4)`) without writing a closure. Errors if combined
+#'   with a non-NULL `obv_pep_efficacy` or given an unknown name.
 #' @param obv_pep_target_class Character vector. Offspring classes eligible for OBV PEP (default
 #'   "HCW").
 #' @param obv_pep_target_locations Character vector. Exposure settings eligible for OBV PEP (default
@@ -231,6 +236,7 @@ branching_process_main <- function(
   obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose (mean DPC when a shape is set)
   obv_pep_dpc_shape = NULL,                  # NULL = deterministic DPC; positive scalar = per-recipient Gamma(mean = obv_pep_dpc(t), shape) draw
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
+  obv_pep_efficacy_args = NULL,              # NULL or named list of overrides for obv_pep_efficacy_from_dpc() (E0/d50/k/dpc_zero/max_dpc); used only when obv_pep_efficacy = NULL
   obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
   obv_pep_target_locations = "hospital",     # character vector: exposure settings eligible for OBV PEP
 
@@ -398,6 +404,14 @@ branching_process_main <- function(
       (!is.numeric(obv_pep_dpc_shape) || length(obv_pep_dpc_shape) != 1L ||
        !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
     stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
+  }
+
+  ## obv_pep_efficacy_args (optional): named overrides for the built-in efficacy curve, used only
+  ## when obv_pep_efficacy = NULL. Validate structure/names/conflict, then force one curve
+  ## evaluation so bad values (e.g. E0 outside [0, 1]) fail fast before the simulation loop.
+  validate_obv_efficacy_args(obv_pep_efficacy, obv_pep_efficacy_args)
+  if (is.null(obv_pep_efficacy) && length(obv_pep_efficacy_args)) {
+    invisible(resolve_obv_efficacy(NULL, 0, obv_pep_efficacy_args = obv_pep_efficacy_args))
   }
 
   ## prob_death_hosp must not exceed prob_death_comm (so second_chance_death_prob <= 1).
@@ -643,6 +657,7 @@ branching_process_main <- function(
                                                                      obv_pep_dpc = obv_pep_dpc,
                                                                      obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                                      obv_pep_efficacy = obv_pep_efficacy,
+                                                                     obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                                      obv_pep_target_class = obv_pep_target_class,
                                                                      obv_pep_target_locations = obv_pep_target_locations,
                                                                      ppe_coverage_hcw = ppe_coverage_hcw,
@@ -671,6 +686,7 @@ branching_process_main <- function(
                                                                   obv_pep_dpc = obv_pep_dpc,
                                                                   obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                                   obv_pep_efficacy = obv_pep_efficacy,
+                                                                  obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                                   obv_pep_target_class = obv_pep_target_class,
                                                                   obv_pep_target_locations = obv_pep_target_locations,
                                                                   prob_hcw_cond_hcw_comm = prob_hcw_cond_hcw_comm,
@@ -710,6 +726,7 @@ branching_process_main <- function(
                                                        obv_pep_dpc = obv_pep_dpc,
                                                        obv_pep_dpc_shape = obv_pep_dpc_shape,
                                                        obv_pep_efficacy = obv_pep_efficacy,
+                                                       obv_pep_efficacy_args = obv_pep_efficacy_args,
                                                        obv_pep_target_class = obv_pep_target_class,
                                                        obv_pep_target_locations = obv_pep_target_locations,
                                                        prob_hcw_cond_funeral_hcw = prob_hcw_cond_funeral_hcw,

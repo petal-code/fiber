@@ -694,3 +694,99 @@ test_that("stochastic DPC flows through branching_process_main: varying, finite,
   expect_gt(length(rec_det), 5)
   expect_equal(rec_det, rep(3, length(rec_det)))
 })
+
+## --- configurable efficacy curve (obv_pep_efficacy_args) ----------------
+## obv_pep_efficacy_args is a named list of overrides for the built-in
+## obv_pep_efficacy_from_dpc() curve (E0, d50, k, dpc_zero, max_dpc), applied
+## only when obv_pep_efficacy is NULL, so the curve's shape can be swept without
+## writing a closure.
+
+test_that("resolve_obv_efficacy applies obv_pep_efficacy_args to the built-in curve", {
+  dpc <- c(0, 2, 5, 8, 12)
+  ## Overrides are forwarded verbatim to obv_pep_efficacy_from_dpc().
+  expect_equal(resolve_obv_efficacy(NULL, dpc, list(E0 = 0.6, d50 = 4)),
+               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, d50 = 4))
+  ## NULL or empty list reproduces the curve defaults exactly.
+  expect_equal(resolve_obv_efficacy(NULL, dpc, NULL),   obv_pep_efficacy_from_dpc(dpc))
+  expect_equal(resolve_obv_efficacy(NULL, dpc, list()), obv_pep_efficacy_from_dpc(dpc))
+})
+
+test_that("obv_pep_efficacy_args validation catches misuse", {
+  expect_error(validate_obv_efficacy_args(NULL, list(E0 = 0.9, foo = 1)),
+               "unknown argument")
+  expect_error(validate_obv_efficacy_args(NULL, list(0.9)),            # unnamed element
+               "fully named")
+  expect_error(validate_obv_efficacy_args(NULL, list(E0 = 1, E0 = 2)), # duplicate names
+               "duplicate")
+  expect_error(validate_obv_efficacy_args(NULL, 5),                    # not a list
+               "named list")
+  ## Curve overrides only make sense for the built-in curve (obv_pep_efficacy = NULL).
+  expect_error(validate_obv_efficacy_args(function(d) d, list(E0 = 0.9)),
+               "only applies when")
+  expect_error(validate_obv_efficacy_args(0.5, list(E0 = 0.9)),
+               "only applies when")
+  ## Valid combinations are silent.
+  expect_silent(validate_obv_efficacy_args(NULL, NULL))
+  expect_silent(validate_obv_efficacy_args(NULL, list()))
+  expect_silent(validate_obv_efficacy_args(NULL, list(E0 = 0.9, max_dpc = 14)))
+  expect_silent(validate_obv_efficacy_args(function(d) rep(0.5, length(d)), NULL))
+})
+
+test_that("bad curve values surface through resolve_obv_efficacy", {
+  ## Value validation is delegated to obv_pep_efficacy_from_dpc (E0 in [0, 1]).
+  expect_error(resolve_obv_efficacy(NULL, 0, list(E0 = 1.5)), "E0")
+})
+
+test_that("obv_pep_efficacy_args overrides the curve in the gate (E0 = 1 prevents all, E0 = 0 none)", {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 6),
+    offspring_class         = rep("HCW", 6),
+    infection_time_absolute = rep(10, 6)
+  )
+  run_gate <- function(curve_args) {
+    set.seed(1)
+    apply_obv_pep_gate(
+      pre_thinning = pre_thinning, kept_indices = 1:6,
+      obv_pep_enabled = TRUE, obv_pep_coverage = 1, obv_pep_adherence = 1,
+      obv_pep_dpc = 0, obv_pep_efficacy = NULL, obv_pep_efficacy_args = curve_args
+    )
+  }
+  ## At dpc = 0, efficacy = E0, so E0 = 1 prevents every adherent candidate and
+  ## E0 = 0 prevents none -- a clean, deterministic check that overrides land.
+  all_prevented  <- run_gate(list(E0 = 1))
+  none_prevented <- run_gate(list(E0 = 0))
+  expect_true(all(!all_prevented$keep))
+  expect_equal(all_prevented$num_treated$prevented, 6L)
+  expect_true(all(none_prevented$keep))
+  expect_equal(none_prevented$num_treated$prevented, 0L)
+})
+
+test_that("branching_process_main fails fast on an out-of-range efficacy curve override", {
+  expect_error(
+    do.call(branching_process_main,
+            obv_bpm_args(obv_pep_enabled = TRUE, obv_pep_efficacy_args = list(E0 = 1.5), seed = 1L)),
+    "E0"
+  )
+})
+
+test_that("obv_pep_efficacy_args flows through branching_process_main (E0 = 0 treats but prevents nothing)", {
+  args <- obv_bpm_args(
+    obv_pep_enabled                      = TRUE,
+    obv_pep_coverage                     = 1,
+    obv_pep_adherence                    = 1,
+    obv_pep_efficacy_args                = list(E0 = 0),
+    ppe_coverage_hcw                     = 0,
+    etu_efficacy                         = 0,
+    general_hospital_quarantine_efficacy = 0,
+    prob_hospitalised_hcw                = 0.9,
+    prob_hospitalised_genPop             = 0.9,
+    prob_hcw_cond_genPop_hospital        = 0.9,
+    prob_hcw_cond_hcw_hospital           = 0.9,
+    seeding_cases                        = 20,
+    seed                                 = 5L
+  )
+  res <- do.call(branching_process_main, args)
+  s   <- summarise_output(res$tdf, sim_info = res$sim_info)
+  expect_gt(s$n_obv_pep_pre_treated, 5)   # people are treated (coverage 1)
+  expect_equal(s$n_obv_pep_prevented, 0)  # but E0 = 0 => zero efficacy => nothing prevented
+})

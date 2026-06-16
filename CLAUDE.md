@@ -112,7 +112,7 @@ Plus a deferred counterfactual counter `n_obv_pep_prevented_deaths` (≤ `n_obv_
 
 The completed replay frame itself is returned as `out$prevented_completed` (alongside `out$tdf` and `out$sim_info`) — one row per averted index infection, carrying its counterfactual natural history (`time_infection_absolute` is the would-be infection time; `outcome` the would-be death/recovery status, whose sum is `prevented_deaths`). It is `NULL` when nothing was prevented. Because the replay uses a zero-time dummy parent, `parent`/`generation` are `NA` and `time_infection_relative` equals `time_infection_absolute`.
 
-Default efficacy curve `obv_pep_efficacy_from_dpc()` is NHP-derived (E0 = 0.82 at dpc=0, decays to 0 at dpc ≥ 10).
+Default efficacy curve `obv_pep_efficacy_from_dpc()` is NHP-derived (E0 = 0.82 at dpc=0, decays to 0 at dpc ≥ 10). Its shape parameters (`E0`, `d50`, `k`, `dpc_zero`, `max_dpc`) can be swept without writing a closure by passing `obv_pep_efficacy_args` (a named list of overrides) to `branching_process_main()`; it applies **only** when `obv_pep_efficacy = NULL` (the built-in curve), errors if combined with a custom `obv_pep_efficacy` or given an unknown name, and is validated up front (e.g. `E0 ∈ [0, 1]`) so a bad sweep point fails before the run.
 
 ### Infection Locations
 
