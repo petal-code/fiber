@@ -187,14 +187,18 @@ each recipient draws an independent DPC from \code{Gamma(shape = obv_pep_dpc_sha
 \code{obv_pep_dpc(t)^2 / obv_pep_dpc_shape} (\code{CV = 1/sqrt(shape)}) -- giving individual
 variation in how quickly the drug is received post-exposure.}
 
-\item{obv_pep_efficacy}{NULL, numeric in \verb{[0, 1]}, or function(dpc). OBV efficacy; NULL uses
-\code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}}.}
+\item{obv_pep_efficacy}{NULL, numeric in \verb{[0, 1]}, or function(dpc). Selects the efficacy model.
+NULL or a scalar use the built-in \code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}} curve; a \emph{scalar} is taken as
+the curve's \code{E0} (peak efficacy at DPC 0), since \code{E0} is a pure vertical scale on a fixed shape.
+A function(dpc) is used as-is (e.g. \code{function(dpc) rep(0.5, length(dpc))} for a flat,
+DPC-independent efficacy).}
 
-\item{obv_pep_efficacy_args}{NULL or a named list of overrides for the built-in efficacy curve
-\code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}} -- any of \code{E0}, \code{d50}, \code{k}, \code{dpc_zero}, \code{max_dpc}. Used only when
-\code{obv_pep_efficacy = NULL}, so you can sweep the curve's shape (e.g.
-\code{obv_pep_efficacy_args = list(E0 = 0.9, d50 = 4)}) without writing a closure. Errors if combined
-with a non-NULL \code{obv_pep_efficacy} or given an unknown name.}
+\item{obv_pep_efficacy_args}{NULL or a named list of shape overrides for the built-in efficacy
+curve \code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}} -- any of \code{E0}, \code{d50}, \code{k}, \code{dpc_zero}, \code{max_dpc}. Applies
+to the built-in curve only (i.e. when \code{obv_pep_efficacy} is NULL or a scalar), so you can sweep
+the shape (e.g. \code{obv_pep_efficacy_args = list(d50 = 4, k = 2)}) without writing a closure.
+Errors if combined with a function \code{obv_pep_efficacy}, if it names \code{E0} while \code{obv_pep_efficacy}
+is a scalar (E0 then comes from \code{obv_pep_efficacy}), or given an unknown name.}
 
 \item{obv_pep_target_class}{Character vector. Offspring classes eligible for OBV PEP (default
 "HCW").}

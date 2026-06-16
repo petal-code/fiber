@@ -107,13 +107,17 @@
 #'   scale = obv_pep_dpc(t) / obv_pep_dpc_shape)` -- mean `obv_pep_dpc(t)`, variance
 #'   `obv_pep_dpc(t)^2 / obv_pep_dpc_shape` (`CV = 1/sqrt(shape)`) -- giving individual
 #'   variation in how quickly the drug is received post-exposure.
-#' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). OBV efficacy; NULL uses
-#'   [obv_pep_efficacy_from_dpc()].
-#' @param obv_pep_efficacy_args NULL or a named list of overrides for the built-in efficacy curve
-#'   [obv_pep_efficacy_from_dpc()] -- any of `E0`, `d50`, `k`, `dpc_zero`, `max_dpc`. Used only when
-#'   `obv_pep_efficacy = NULL`, so you can sweep the curve's shape (e.g.
-#'   `obv_pep_efficacy_args = list(E0 = 0.9, d50 = 4)`) without writing a closure. Errors if combined
-#'   with a non-NULL `obv_pep_efficacy` or given an unknown name.
+#' @param obv_pep_efficacy NULL, numeric in `[0, 1]`, or function(dpc). Selects the efficacy model.
+#'   NULL or a scalar use the built-in [obv_pep_efficacy_from_dpc()] curve; a *scalar* is taken as
+#'   the curve's `E0` (peak efficacy at DPC 0), since `E0` is a pure vertical scale on a fixed shape.
+#'   A function(dpc) is used as-is (e.g. `function(dpc) rep(0.5, length(dpc))` for a flat,
+#'   DPC-independent efficacy).
+#' @param obv_pep_efficacy_args NULL or a named list of shape overrides for the built-in efficacy
+#'   curve [obv_pep_efficacy_from_dpc()] -- any of `E0`, `d50`, `k`, `dpc_zero`, `max_dpc`. Applies
+#'   to the built-in curve only (i.e. when `obv_pep_efficacy` is NULL or a scalar), so you can sweep
+#'   the shape (e.g. `obv_pep_efficacy_args = list(d50 = 4, k = 2)`) without writing a closure.
+#'   Errors if combined with a function `obv_pep_efficacy`, if it names `E0` while `obv_pep_efficacy`
+#'   is a scalar (E0 then comes from `obv_pep_efficacy`), or given an unknown name.
 #' @param obv_pep_target_class Character vector. Offspring classes eligible for OBV PEP (default
 #'   "HCW").
 #' @param obv_pep_target_locations Character vector. Exposure settings eligible for OBV PEP (default
@@ -406,12 +410,15 @@ branching_process_main <- function(
     stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
   }
 
-  ## obv_pep_efficacy_args (optional): named overrides for the built-in efficacy curve, used only
-  ## when obv_pep_efficacy = NULL. Validate structure/names/conflict, then force one curve
-  ## evaluation so bad values (e.g. E0 outside [0, 1]) fail fast before the simulation loop.
+  ## obv_pep_efficacy_args (optional): named overrides for the built-in efficacy curve. The curve
+  ## is used when obv_pep_efficacy is NULL or a scalar (the scalar is the curve's E0). Validate
+  ## structure/names/conflict, then force one curve evaluation so bad values (e.g. E0 outside
+  ## [0, 1]) fail fast before the simulation loop. Skip a custom function (calling it could consume
+  ## RNG) and the trivial NULL-efficacy/no-overrides case (curve defaults are known-valid).
   validate_obv_efficacy_args(obv_pep_efficacy, obv_pep_efficacy_args)
-  if (is.null(obv_pep_efficacy) && length(obv_pep_efficacy_args)) {
-    invisible(resolve_obv_efficacy(NULL, 0, obv_pep_efficacy_args = obv_pep_efficacy_args))
+  if (!is.function(obv_pep_efficacy) &&
+      (!is.null(obv_pep_efficacy) || length(obv_pep_efficacy_args))) {
+    invisible(resolve_obv_efficacy(obv_pep_efficacy, 0, obv_pep_efficacy_args = obv_pep_efficacy_args))
   }
 
   ## prob_death_hosp must not exceed prob_death_comm (so second_chance_death_prob <= 1).

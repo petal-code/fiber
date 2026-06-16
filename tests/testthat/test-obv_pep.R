@@ -696,10 +696,10 @@ test_that("stochastic DPC flows through branching_process_main: varying, finite,
 })
 
 ## --- configurable efficacy curve (obv_pep_efficacy_args) ----------------
-## obv_pep_efficacy_args is a named list of overrides for the built-in
+## obv_pep_efficacy_args is a named list of shape overrides for the built-in
 ## obv_pep_efficacy_from_dpc() curve (E0, d50, k, dpc_zero, max_dpc), applied
-## only when obv_pep_efficacy is NULL, so the curve's shape can be swept without
-## writing a closure.
+## when obv_pep_efficacy is NULL or a scalar (a scalar IS the curve's E0), so the
+## curve's shape can be swept without writing a closure.
 
 test_that("resolve_obv_efficacy applies obv_pep_efficacy_args to the built-in curve", {
   dpc <- c(0, 2, 5, 8, 12)
@@ -720,21 +720,59 @@ test_that("obv_pep_efficacy_args validation catches misuse", {
                "duplicate")
   expect_error(validate_obv_efficacy_args(NULL, 5),                    # not a list
                "named list")
-  ## Curve overrides only make sense for the built-in curve (obv_pep_efficacy = NULL).
-  expect_error(validate_obv_efficacy_args(function(d) d, list(E0 = 0.9)),
-               "only applies when")
+  ## Curve overrides apply to the built-in curve only, not a custom function.
+  expect_error(validate_obv_efficacy_args(function(d) d, list(d50 = 4)),
+               "function")
+  ## A scalar obv_pep_efficacy already supplies E0, so naming E0 in args conflicts.
   expect_error(validate_obv_efficacy_args(0.5, list(E0 = 0.9)),
-               "only applies when")
+               "E0")
   ## Valid combinations are silent.
   expect_silent(validate_obv_efficacy_args(NULL, NULL))
   expect_silent(validate_obv_efficacy_args(NULL, list()))
   expect_silent(validate_obv_efficacy_args(NULL, list(E0 = 0.9, max_dpc = 14)))
+  expect_silent(validate_obv_efficacy_args(0.5, list(d50 = 4, k = 2)))   # scalar E0 + shape OK
   expect_silent(validate_obv_efficacy_args(function(d) rep(0.5, length(d)), NULL))
 })
 
 test_that("bad curve values surface through resolve_obv_efficacy", {
   ## Value validation is delegated to obv_pep_efficacy_from_dpc (E0 in [0, 1]).
   expect_error(resolve_obv_efficacy(NULL, 0, list(E0 = 1.5)), "E0")
+})
+
+test_that("scalar obv_pep_efficacy is used as the curve's E0 (peak at DPC 0)", {
+  dpc <- c(0, 2, 5, 8, 12)
+  ## Scalar efficacy == E0 of the built-in curve; shape from args or defaults.
+  expect_equal(resolve_obv_efficacy(0.6, dpc),
+               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6))
+  expect_equal(resolve_obv_efficacy(0.6, dpc, list(d50 = 4, k = 2)),
+               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, d50 = 4, k = 2))
+  ## At DPC 0 the curve equals E0 exactly (peak efficacy).
+  expect_equal(resolve_obv_efficacy(0.7, 0), 0.7)
+  ## E0 is a pure vertical scale: halving E0 halves the whole curve.
+  expect_equal(resolve_obv_efficacy(0.5, dpc), 0.5 * resolve_obv_efficacy(1, dpc))
+  ## A bad scalar E0 is rejected by the curve's own validation.
+  expect_error(resolve_obv_efficacy(1.5, 0), "E0")
+})
+
+test_that("scalar obv_pep_efficacy as E0 drives prevention through the gate", {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 8),
+    offspring_class         = rep("HCW", 8),
+    infection_time_absolute = rep(10, 8)
+  )
+  ## dpc = 0 so efficacy = E0 exactly: scalar 1 prevents all, scalar 0 none.
+  run_gate <- function(eff, curve_args = NULL) {
+    set.seed(1)
+    apply_obv_pep_gate(
+      pre_thinning = pre_thinning, kept_indices = 1:8,
+      obv_pep_enabled = TRUE, obv_pep_coverage = 1, obv_pep_adherence = 1,
+      obv_pep_dpc = 0, obv_pep_efficacy = eff, obv_pep_efficacy_args = curve_args
+    )
+  }
+  expect_equal(run_gate(1)$num_treated$prevented, 8L)
+  expect_equal(run_gate(0)$num_treated$prevented, 0L)
+  ## Scalar E0 plus a shape override is accepted and reaches the curve.
+  expect_silent(run_gate(0.5, list(d50 = 4)))
 })
 
 test_that("obv_pep_efficacy_args overrides the curve in the gate (E0 = 1 prevents all, E0 = 0 none)", {

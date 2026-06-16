@@ -78,12 +78,13 @@ deterministic at \code{obv_pep_dpc}; if set, each recipient's DPC is drawn from 
 with mean \code{obv_pep_dpc(t)} and this fixed shape, adding individual variation in
 time-to-treatment. See \code{apply_obv_pep_gate()}.}
 
-\item{obv_pep_efficacy}{NULL, numeric in \code{[0,1]}, or function(dpc). If NULL, uses
-\code{obv_pep_efficacy_from_dpc()}, which is cut to zero after 10 DPC.}
+\item{obv_pep_efficacy}{NULL, numeric in \code{[0,1]}, or function(dpc). NULL or a scalar use the
+built-in \code{obv_pep_efficacy_from_dpc()} curve, with a scalar taken as the curve's \code{E0}
+(peak efficacy at DPC 0); a function(dpc) is used as-is. See \code{apply_obv_pep_gate()}.}
 
-\item{obv_pep_efficacy_args}{NULL or a named list of overrides for
-\code{obv_pep_efficacy_from_dpc()} (e.g. \code{list(E0 = 0.9, d50 = 4)}), used only when
-\code{obv_pep_efficacy} is NULL. See \code{apply_obv_pep_gate()}.}
+\item{obv_pep_efficacy_args}{NULL or a named list of shape overrides for
+\code{obv_pep_efficacy_from_dpc()} (e.g. \code{list(d50 = 4, k = 2)}), applied to the built-in
+curve only (\code{obv_pep_efficacy} NULL or scalar). See \code{apply_obv_pep_gate()}.}
 
 \item{obv_pep_target_class}{Character vector of offspring classes eligible for OBV PEP.
 Defaults to \code{"HCW"}.}

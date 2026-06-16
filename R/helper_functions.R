@@ -271,10 +271,13 @@ empty_offspring_dataframe <- function() {
 ## Validate the optional override list for the built-in OBV efficacy curve
 ## (obv_pep_efficacy_from_dpc). NULL or list() means "use the curve defaults".
 ## Names must be a subset of the curve's tunable arguments; `dpc` is supplied by
-## the simulation and cannot be overridden. The list only applies when
-## obv_pep_efficacy is NULL (the built-in curve); supplying both a custom
-## obv_pep_efficacy AND a non-empty args list is contradictory and errors, so a
-## parameter sweep can never silently ignore the curve knobs it set.
+## the simulation and cannot be overridden. The overrides feed the built-in
+## curve, which is selected when obv_pep_efficacy is either NULL (E0 from the
+## args/default) or a numeric scalar (the scalar IS the curve's E0 -- its peak
+## efficacy at DPC 0 -- with the shape from the args/default). Hence:
+##   * a custom function obv_pep_efficacy takes no curve overrides (error); and
+##   * when obv_pep_efficacy is a scalar it already supplies E0, so passing E0
+##     again in the args is a double-specification (error).
 validate_obv_efficacy_args <- function(obv_pep_efficacy, obv_pep_efficacy_args) {
   if (is.null(obv_pep_efficacy_args)) return(invisible(NULL))
   if (!is.list(obv_pep_efficacy_args)) {
@@ -295,8 +298,12 @@ validate_obv_efficacy_args <- function(obv_pep_efficacy, obv_pep_efficacy_args) 
                  paste(bad, collapse = ", "), paste(allowed, collapse = ", ")),
          call. = FALSE)
   }
-  if (!is.null(obv_pep_efficacy)) {
-    stop("`obv_pep_efficacy_args` only applies when `obv_pep_efficacy = NULL` (the built-in curve). Set one or the other.",
+  if (is.function(obv_pep_efficacy)) {
+    stop("`obv_pep_efficacy_args` does not apply when `obv_pep_efficacy` is a function; parameterise that function directly.",
+         call. = FALSE)
+  }
+  if (!is.null(obv_pep_efficacy) && "E0" %in% nm) {
+    stop("`E0` is supplied via `obv_pep_efficacy` (used as the curve's E0); do not also pass it in `obv_pep_efficacy_args`.",
          call. = FALSE)
   }
   invisible(NULL)
@@ -307,19 +314,23 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = 
     return(numeric(0))
   }
 
-  if (is.null(obv_pep_efficacy)) {
-    ## Built-in NHP-derived curve, optionally with caller overrides for its
-    ## shape parameters (E0, d50, k, dpc_zero, max_dpc). obv_pep_efficacy_from_dpc
-    ## validates the supplied values (e.g. E0 in [0, 1]) and errors on bad ones.
-    value <- if (length(obv_pep_efficacy_args)) {
-      do.call(obv_pep_efficacy_from_dpc, c(list(dpc), obv_pep_efficacy_args))
+  if (is.function(obv_pep_efficacy)) {
+    value <- obv_pep_efficacy(dpc)
+  } else {
+    ## Built-in NHP-derived curve. A scalar obv_pep_efficacy supplies the curve's
+    ## E0 (peak efficacy at DPC 0); the shape parameters (d50, k, dpc_zero,
+    ## max_dpc) come from obv_pep_efficacy_args or the curve defaults. NULL
+    ## obv_pep_efficacy takes E0 from the args/default too. obv_pep_efficacy_from_dpc
+    ## validates the resulting parameters (e.g. E0 in [0, 1]) and errors on bad ones.
+    curve_args <- obv_pep_efficacy_args
+    if (!is.null(obv_pep_efficacy)) {
+      curve_args <- c(list(E0 = obv_pep_efficacy), curve_args)
+    }
+    value <- if (length(curve_args)) {
+      do.call(obv_pep_efficacy_from_dpc, c(list(dpc), curve_args))
     } else {
       obv_pep_efficacy_from_dpc(dpc)
     }
-  } else if (is.function(obv_pep_efficacy)) {
-    value <- obv_pep_efficacy(dpc)
-  } else {
-    value <- obv_pep_efficacy
   }
 
   if (!is.numeric(value)) {
@@ -405,14 +416,21 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = 
 #'   (so larger shape = tighter spread; \code{CV = 1/sqrt(shape)}). This models
 #'   individual variation in how quickly the drug is received post-exposure. A
 #'   mean of 0 yields a point mass at DPC 0.
-#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If
-#'   NULL, the NHP-derived \code{obv_pep_efficacy_from_dpc()} helper is used.
-#' @param obv_pep_efficacy_args NULL or a named list of overrides for
+#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc).
+#'   Selects the efficacy model. NULL or a scalar use the NHP-derived
+#'   \code{obv_pep_efficacy_from_dpc()} curve; a \emph{scalar} is taken as the
+#'   curve's \code{E0} (peak efficacy at DPC 0), since \code{E0} is a pure
+#'   vertical scale on a fixed shape. A function(dpc) is used as-is (e.g.
+#'   \code{function(dpc) rep(0.5, length(dpc))} for a flat, DPC-independent
+#'   efficacy).
+#' @param obv_pep_efficacy_args NULL or a named list of shape overrides for
 #'   \code{obv_pep_efficacy_from_dpc()} (\code{E0}, \code{d50}, \code{k},
-#'   \code{dpc_zero}, \code{max_dpc}), used only when \code{obv_pep_efficacy} is
-#'   NULL (the built-in curve). Lets a caller sweep the efficacy curve's shape
-#'   without writing a closure. Errors if combined with a non-NULL
-#'   \code{obv_pep_efficacy} or given an unknown name.
+#'   \code{dpc_zero}, \code{max_dpc}). Applies to the built-in curve only (i.e.
+#'   when \code{obv_pep_efficacy} is NULL or a scalar), so a caller can sweep the
+#'   curve's shape without writing a closure. Errors if combined with a function
+#'   \code{obv_pep_efficacy}, if it names \code{E0} while \code{obv_pep_efficacy}
+#'   is a scalar (E0 then comes from \code{obv_pep_efficacy}), or given an
+#'   unknown name.
 #' @param obv_pep_target_class Character vector of offspring classes eligible
 #'   for OBV PEP. Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure locations
