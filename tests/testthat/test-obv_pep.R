@@ -276,28 +276,45 @@ test_that("prevented_completed is NULL when OBV prevents nothing", {
   expect_null(res$prevented_completed)
 })
 
-## --- obv_pep_efficacy_from_dpc boundaries ------------------------------
+## --- obv_pep_efficacy_from_dpc: flat default ---------------------------
+
+test_that("obv_pep_efficacy_from_dpc is flat (constant E0) by default", {
+  dpc <- c(0, 2, 5, 10, 15, 30, 100)
+  expect_equal(obv_pep_efficacy_from_dpc(dpc, E0 = 0.7), rep(0.7, length(dpc)))
+  ## shape = "flat" is the explicit default; cutoffs do not apply in flat mode.
+  expect_equal(obv_pep_efficacy_from_dpc(dpc, E0 = 0.7, shape = "flat"), rep(0.7, length(dpc)))
+  ## Default E0 at any DPC equals the dpc = 0 value (no decay).
+  expect_equal(obv_pep_efficacy_from_dpc(c(0, 50)), rep(obv_pep_efficacy_from_dpc(0), 2))
+})
+
+test_that("obv_pep_efficacy_from_dpc rejects an unknown shape", {
+  expect_error(obv_pep_efficacy_from_dpc(0, shape = "sigmoid"))
+})
+
+## --- obv_pep_efficacy_from_dpc: logistic boundaries (shape = "logistic") ---
 
 test_that("obv_pep_efficacy_from_dpc returns E0 at dpc = 0", {
+  ## True for both modes; the dpc = 0 value is the peak / the flat constant.
   expect_equal(obv_pep_efficacy_from_dpc(0), 0.82342697, tolerance = 1e-6)
+  expect_equal(obv_pep_efficacy_from_dpc(0, shape = "logistic"), 0.82342697, tolerance = 1e-6)
 })
 
-test_that("obv_pep_efficacy_from_dpc is 0 at dpc_zero = 15", {
-  expect_equal(obv_pep_efficacy_from_dpc(15), 0)
+test_that("obv_pep_efficacy_from_dpc (logistic) is 0 at dpc_zero = 15", {
+  expect_equal(obv_pep_efficacy_from_dpc(15, shape = "logistic"), 0)
 })
 
-test_that("obv_pep_efficacy_from_dpc is 0 just past max_dpc = 10", {
-  expect_equal(obv_pep_efficacy_from_dpc(10.01), 0)
+test_that("obv_pep_efficacy_from_dpc (logistic) is 0 just past max_dpc = 10", {
+  expect_equal(obv_pep_efficacy_from_dpc(10.01, shape = "logistic"), 0)
 })
 
-test_that("obv_pep_efficacy_from_dpc is in [0, 1] across a sensible range", {
-  vals <- obv_pep_efficacy_from_dpc(seq(0, 20, by = 0.5))
+test_that("obv_pep_efficacy_from_dpc (logistic) is in [0, 1] across a sensible range", {
+  vals <- obv_pep_efficacy_from_dpc(seq(0, 20, by = 0.5), shape = "logistic")
   expect_true(all(vals >= 0 & vals <= 1))
 })
 
-test_that("obv_pep_efficacy_from_dpc is monotone non-increasing on [0, 15]", {
+test_that("obv_pep_efficacy_from_dpc (logistic) is monotone non-increasing on [0, 15]", {
   dpc <- seq(0, 15, by = 0.5)
-  vals <- obv_pep_efficacy_from_dpc(dpc)
+  vals <- obv_pep_efficacy_from_dpc(dpc, shape = "logistic")
   expect_true(all(diff(vals) <= 1e-10))
 })
 
@@ -535,4 +552,301 @@ test_that("summarise_output() exposes the expected OBV PEP field names", {
   expect_equal(missing_fields, character(0),
                info = sprintf("summarise_output() missing fields: %s",
                               paste(missing_fields, collapse = ", ")))
+})
+
+## --- per-individual stochastic DPC (obv_pep_dpc_shape) ------------------
+## obv_pep_dpc(t) is the MEAN days-post-challenge; obv_pep_dpc_shape turns the
+## (previously deterministic) DPC into a per-recipient Gamma draw with that mean,
+## modelling individual variation in how quickly the drug is received. The draw
+## IS the realised (receipt - infection) delay. NULL (default) preserves the
+## deterministic behaviour bit-for-bit.
+
+## All-eligible HCW-hospital candidate set, fully covered & adherent, with
+## efficacy = 0 so nothing is prevented -- every candidate is then a recipient
+## whose drawn DPC surfaces in metadata$obv_pep_dpc, isolating the DPC draw.
+dpc_gate_all_treated <- function(n, dpc, shape, seed = 1L,
+                                 infection_time_absolute = 10) {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", n),
+    offspring_class         = rep("HCW", n),
+    infection_time_absolute = rep(infection_time_absolute, n)
+  )
+  set.seed(seed)
+  apply_obv_pep_gate(
+    pre_thinning             = pre_thinning,
+    kept_indices             = seq_len(n),
+    obv_pep_enabled          = TRUE,
+    obv_pep_coverage         = 1,
+    obv_pep_adherence        = 1,
+    obv_pep_dpc              = dpc,
+    obv_pep_dpc_shape        = shape,
+    obv_pep_efficacy         = 0,
+    obv_pep_target_class     = "HCW",
+    obv_pep_target_locations = "hospital"
+  )
+}
+
+test_that("obv_pep_dpc_shape = NULL keeps DPC deterministic at the mean", {
+  res <- dpc_gate_all_treated(n = 200, dpc = 3, shape = NULL)
+  expect_true(all(res$metadata$obv_pep_received))
+  ## Every recipient's DPC is exactly the mean -- no draw, no spread.
+  expect_equal(res$metadata$obv_pep_dpc, rep(3, 200))
+})
+
+test_that("obv_pep_dpc_shape draws per-recipient DPC with the requested mean and variance", {
+  res <- dpc_gate_all_treated(n = 20000, dpc = 4, shape = 2, seed = 42L)
+  dpc <- res$metadata$obv_pep_dpc
+  expect_length(dpc, 20000)
+  expect_true(all(is.finite(dpc)))
+  expect_true(all(dpc >= 0))                            # Gamma support is non-negative
+  expect_false(isTRUE(all.equal(dpc, rep(4, 20000))))  # genuine individual variation
+  ## Sample mean recovers obv_pep_dpc; sample variance ~ mean^2 / shape = 16/2 = 8.
+  expect_equal(mean(dpc), 4, tolerance = 0.05)
+  expect_equal(var(dpc),  8, tolerance = 0.2)
+})
+
+test_that("larger obv_pep_dpc_shape gives a tighter DPC spread (same mean)", {
+  tight <- dpc_gate_all_treated(n = 20000, dpc = 5, shape = 20, seed = 7L)
+  loose <- dpc_gate_all_treated(n = 20000, dpc = 5, shape = 1,  seed = 7L)
+  expect_lt(var(tight$metadata$obv_pep_dpc), var(loose$metadata$obv_pep_dpc))
+  expect_equal(mean(tight$metadata$obv_pep_dpc), 5, tolerance = 0.05)
+  expect_equal(mean(loose$metadata$obv_pep_dpc), 5, tolerance = 0.1)
+})
+
+test_that("stochastic DPC draw is reproducible under a fixed seed", {
+  r1 <- dpc_gate_all_treated(n = 500, dpc = 3, shape = 2, seed = 99L)
+  r2 <- dpc_gate_all_treated(n = 500, dpc = 3, shape = 2, seed = 99L)
+  expect_equal(r1$metadata$obv_pep_dpc, r2$metadata$obv_pep_dpc)
+})
+
+test_that("a zero mean yields DPC 0 even with a shape set (degenerate point mass)", {
+  res <- dpc_gate_all_treated(n = 100, dpc = 0, shape = 2)
+  expect_equal(res$metadata$obv_pep_dpc, rep(0, 100))
+})
+
+test_that("a time-varying mean is honoured per-recipient under stochastic DPC", {
+  ## Mean DPC ramps from 2 (early) to 12 (late) in calendar time; the drawn DPCs
+  ## should track the mean at each recipient's own absolute infection time.
+  mean_fn <- make_time_varying(times = c(0, 100), values = c(2, 12))
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 8000),
+    offspring_class         = rep("HCW", 8000),
+    infection_time_absolute = c(rep(0, 4000), rep(100, 4000))
+  )
+  set.seed(3L)
+  res <- apply_obv_pep_gate(
+    pre_thinning             = pre_thinning,
+    kept_indices             = seq_len(8000),
+    obv_pep_enabled          = TRUE,
+    obv_pep_coverage         = 1,
+    obv_pep_adherence        = 1,
+    obv_pep_dpc              = mean_fn,
+    obv_pep_dpc_shape        = 5,
+    obv_pep_efficacy         = 0
+  )
+  dpc <- res$metadata$obv_pep_dpc
+  expect_equal(mean(dpc[1:4000]),    2,  tolerance = 0.1)
+  expect_equal(mean(dpc[4001:8000]), 12, tolerance = 0.2)
+})
+
+test_that("obv_pep_dpc_shape validation rejects non-positive / non-scalar values", {
+  base <- list(
+    pre_thinning = list(
+      infection_location      = rep("hospital", 3),
+      offspring_class         = rep("HCW", 3),
+      infection_time_absolute = rep(10, 3)
+    ),
+    kept_indices     = 1:3,
+    obv_pep_enabled  = TRUE,
+    obv_pep_coverage = 1,
+    obv_pep_efficacy = 0
+  )
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = 0))),
+               "must be NULL or a single finite positive numeric")
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = -1))),
+               "positive")
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = c(1, 2)))),
+               "single")
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = Inf))),
+               "finite")
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = "a"))),
+               "numeric")
+  ## NULL (the default) is accepted.
+  expect_silent(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = NULL))))
+})
+
+test_that("stochastic DPC flows through branching_process_main: varying, finite, reproducible", {
+  ## Treat all eligible HCW-hospital exposures (coverage 1) but prevent nothing
+  ## (efficacy 0), so the outbreak proceeds and the recorded DPCs are pure draws.
+  args <- obv_bpm_args(
+    obv_pep_enabled                      = TRUE,
+    obv_pep_coverage                     = 1,
+    obv_pep_adherence                    = 1,
+    obv_pep_dpc                          = 3,
+    obv_pep_dpc_shape                    = 2,
+    obv_pep_efficacy                     = 0,
+    ppe_coverage_hcw                     = 0,
+    etu_efficacy                         = 0,
+    general_hospital_quarantine_efficacy = 0,
+    prob_hospitalised_hcw                = 0.9,
+    prob_hospitalised_genPop             = 0.9,
+    prob_hcw_cond_genPop_hospital        = 0.9,
+    prob_hcw_cond_hcw_hospital           = 0.9,
+    seeding_cases                        = 20,
+    seed                                 = 5L
+  )
+  r1  <- do.call(branching_process_main, args)
+  r2  <- do.call(branching_process_main, args)
+  rec <- r1$tdf$obv_pep_dpc[r1$tdf$obv_pep_received]
+
+  expect_gt(length(rec), 5)            # the scenario does treat people
+  expect_true(all(is.finite(rec)))
+  expect_true(all(rec >= 0))
+  expect_gt(var(rec), 0)               # genuine per-individual variation in DPC
+  expect_equal(r1$tdf, r2$tdf)         # reproducible under a fixed seed
+
+  ## Deterministic counterpart: same scenario, shape = NULL => DPC pinned at the mean.
+  det <- do.call(branching_process_main, utils::modifyList(args, list(obv_pep_dpc_shape = NULL)))
+  rec_det <- det$tdf$obv_pep_dpc[det$tdf$obv_pep_received]
+  expect_gt(length(rec_det), 5)
+  expect_equal(rec_det, rep(3, length(rec_det)))
+})
+
+## --- configurable efficacy curve (obv_pep_efficacy_args) ----------------
+## obv_pep_efficacy_args is a named list of shape overrides for the built-in
+## obv_pep_efficacy_from_dpc() curve (E0, d50, k, dpc_zero, max_dpc), applied
+## when obv_pep_efficacy is NULL or a scalar (a scalar IS the curve's E0), so the
+## curve's shape can be swept without writing a closure.
+
+test_that("resolve_obv_efficacy applies obv_pep_efficacy_args to the built-in curve", {
+  dpc <- c(0, 2, 5, 8, 12)
+  ## Overrides are forwarded verbatim, including the shape switch that turns on decay.
+  expect_equal(resolve_obv_efficacy(NULL, dpc, list(shape = "logistic", E0 = 0.6, d50 = 4)),
+               obv_pep_efficacy_from_dpc(dpc, shape = "logistic", E0 = 0.6, d50 = 4))
+  ## NULL or empty list reproduces the (flat) curve defaults exactly.
+  expect_equal(resolve_obv_efficacy(NULL, dpc, NULL),   obv_pep_efficacy_from_dpc(dpc))
+  expect_equal(resolve_obv_efficacy(NULL, dpc, list()), obv_pep_efficacy_from_dpc(dpc))
+  ## Default (no shape) is flat, so the shape override genuinely changes the result.
+  expect_false(isTRUE(all.equal(
+    resolve_obv_efficacy(NULL, dpc, list(E0 = 0.6)),
+    resolve_obv_efficacy(NULL, dpc, list(shape = "logistic", E0 = 0.6)))))
+})
+
+test_that("obv_pep_efficacy_args validation catches misuse", {
+  expect_error(validate_obv_efficacy_args(NULL, list(E0 = 0.9, foo = 1)),
+               "unknown argument")
+  expect_error(validate_obv_efficacy_args(NULL, list(0.9)),            # unnamed element
+               "fully named")
+  expect_error(validate_obv_efficacy_args(NULL, list(E0 = 1, E0 = 2)), # duplicate names
+               "duplicate")
+  expect_error(validate_obv_efficacy_args(NULL, 5),                    # not a list
+               "named list")
+  ## Curve overrides apply to the built-in curve only, not a custom function.
+  expect_error(validate_obv_efficacy_args(function(d) d, list(d50 = 4)),
+               "function")
+  ## A scalar obv_pep_efficacy already supplies E0, so naming E0 in args conflicts.
+  expect_error(validate_obv_efficacy_args(0.5, list(E0 = 0.9)),
+               "E0")
+  ## Valid combinations are silent.
+  expect_silent(validate_obv_efficacy_args(NULL, NULL))
+  expect_silent(validate_obv_efficacy_args(NULL, list()))
+  expect_silent(validate_obv_efficacy_args(NULL, list(E0 = 0.9, max_dpc = 14)))
+  expect_silent(validate_obv_efficacy_args(0.5, list(d50 = 4, k = 2)))   # scalar E0 + shape OK
+  expect_silent(validate_obv_efficacy_args(function(d) rep(0.5, length(d)), NULL))
+})
+
+test_that("bad curve values surface through resolve_obv_efficacy", {
+  ## Value validation is delegated to obv_pep_efficacy_from_dpc (E0 in [0, 1]).
+  expect_error(resolve_obv_efficacy(NULL, 0, list(E0 = 1.5)), "E0")
+})
+
+test_that("scalar obv_pep_efficacy is used as the curve's E0 (flat by default)", {
+  dpc <- c(0, 2, 5, 8, 12)
+  ## A bare scalar is E0 of the built-in curve, which is flat by default:
+  ## efficacy = the scalar at every DPC.
+  expect_equal(resolve_obv_efficacy(0.6, dpc), rep(0.6, length(dpc)))
+  expect_equal(resolve_obv_efficacy(0.6, dpc), obv_pep_efficacy_from_dpc(dpc, E0 = 0.6))
+  ## With shape = "logistic" the scalar E0 feeds the decaying curve.
+  expect_equal(resolve_obv_efficacy(0.6, dpc, list(shape = "logistic", d50 = 4, k = 2)),
+               obv_pep_efficacy_from_dpc(dpc, E0 = 0.6, shape = "logistic", d50 = 4, k = 2))
+  ## E0 is a pure vertical scale: halving E0 halves the whole curve (logistic too).
+  expect_equal(resolve_obv_efficacy(0.5, dpc, list(shape = "logistic")),
+               0.5 * resolve_obv_efficacy(1, dpc, list(shape = "logistic")))
+  ## A bad scalar E0 is rejected by the curve's own validation.
+  expect_error(resolve_obv_efficacy(1.5, 0), "E0")
+})
+
+test_that("scalar obv_pep_efficacy as E0 drives prevention through the gate", {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 8),
+    offspring_class         = rep("HCW", 8),
+    infection_time_absolute = rep(10, 8)
+  )
+  ## dpc = 0 so efficacy = E0 exactly: scalar 1 prevents all, scalar 0 none.
+  run_gate <- function(eff, curve_args = NULL) {
+    set.seed(1)
+    apply_obv_pep_gate(
+      pre_thinning = pre_thinning, kept_indices = 1:8,
+      obv_pep_enabled = TRUE, obv_pep_coverage = 1, obv_pep_adherence = 1,
+      obv_pep_dpc = 0, obv_pep_efficacy = eff, obv_pep_efficacy_args = curve_args
+    )
+  }
+  expect_equal(run_gate(1)$num_treated$prevented, 8L)
+  expect_equal(run_gate(0)$num_treated$prevented, 0L)
+  ## Scalar E0 plus a shape override is accepted and reaches the curve.
+  expect_silent(run_gate(0.5, list(d50 = 4)))
+})
+
+test_that("obv_pep_efficacy_args overrides the curve in the gate (E0 = 1 prevents all, E0 = 0 none)", {
+  pre_thinning <- list(
+    infection_location      = rep("hospital", 6),
+    offspring_class         = rep("HCW", 6),
+    infection_time_absolute = rep(10, 6)
+  )
+  run_gate <- function(curve_args) {
+    set.seed(1)
+    apply_obv_pep_gate(
+      pre_thinning = pre_thinning, kept_indices = 1:6,
+      obv_pep_enabled = TRUE, obv_pep_coverage = 1, obv_pep_adherence = 1,
+      obv_pep_dpc = 0, obv_pep_efficacy = NULL, obv_pep_efficacy_args = curve_args
+    )
+  }
+  ## At dpc = 0, efficacy = E0, so E0 = 1 prevents every adherent candidate and
+  ## E0 = 0 prevents none -- a clean, deterministic check that overrides land.
+  all_prevented  <- run_gate(list(E0 = 1))
+  none_prevented <- run_gate(list(E0 = 0))
+  expect_true(all(!all_prevented$keep))
+  expect_equal(all_prevented$num_treated$prevented, 6L)
+  expect_true(all(none_prevented$keep))
+  expect_equal(none_prevented$num_treated$prevented, 0L)
+})
+
+test_that("branching_process_main fails fast on an out-of-range efficacy curve override", {
+  expect_error(
+    do.call(branching_process_main,
+            obv_bpm_args(obv_pep_enabled = TRUE, obv_pep_efficacy_args = list(E0 = 1.5), seed = 1L)),
+    "E0"
+  )
+})
+
+test_that("obv_pep_efficacy_args flows through branching_process_main (E0 = 0 treats but prevents nothing)", {
+  args <- obv_bpm_args(
+    obv_pep_enabled                      = TRUE,
+    obv_pep_coverage                     = 1,
+    obv_pep_adherence                    = 1,
+    obv_pep_efficacy_args                = list(E0 = 0),
+    ppe_coverage_hcw                     = 0,
+    etu_efficacy                         = 0,
+    general_hospital_quarantine_efficacy = 0,
+    prob_hospitalised_hcw                = 0.9,
+    prob_hospitalised_genPop             = 0.9,
+    prob_hcw_cond_genPop_hospital        = 0.9,
+    prob_hcw_cond_hcw_hospital           = 0.9,
+    seeding_cases                        = 20,
+    seed                                 = 5L
+  )
+  res <- do.call(branching_process_main, args)
+  s   <- summarise_output(res$tdf, sim_info = res$sim_info)
+  expect_gt(s$n_obv_pep_pre_treated, 5)   # people are treated (coverage 1)
+  expect_equal(s$n_obv_pep_prevented, 0)  # but E0 = 0 => zero efficacy => nothing prevented
 })

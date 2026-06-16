@@ -118,25 +118,37 @@ check_nonneg_on_grid <- function(param, grid, param_name) {
 
 #' Obeldesivir PEP efficacy as a function of days post challenge/exposure
 #'
-#' This helper implements the current NHP-derived working curve used for the
-#' first OBV/ODV branch. The defaults are the maximum-likelihood estimates from
-#' `ODV_PEP_plot1_only_with_ribbon_GOF.R` using the scaled logistic model with
-#' `dpc_zero = 15` and `k = 1`. For this model branch, efficacy is set to zero
-#' after `max_dpc = 10`, so the fitted line is intentionally cut at 10 DPC.
+#' Returns OBV PEP efficacy for each DPC value. By default (\code{shape = "flat"})
+#' efficacy is \emph{constant} at \code{E0} for every DPC -- a deliberately
+#' model-neutral default, since the DPC-to-efficacy relationship is not yet
+#' pinned down and the previous logistic constants were placeholders. Set
+#' \code{shape = "logistic"} to use the NHP-derived scaled-logistic decay
+#' (efficacy \code{E0} at DPC 0, falling to 0 by \code{dpc_zero} and forced to 0
+#' beyond \code{max_dpc}); its default \code{d50}/\code{k}/\code{dpc_zero}/
+#' \code{max_dpc} are the maximum-likelihood estimates from
+#' \code{ODV_PEP_plot1_only_with_ribbon_GOF.R}. The curve is separable in
+#' \code{E0}: \code{eff(dpc) = E0 * shape(dpc)} with \code{shape(0) = 1}, so
+#' \code{E0} is a pure vertical scale equal to the peak (DPC 0) efficacy.
 #'
 #' @param dpc Numeric vector. Days post challenge/exposure at which OBV is first
 #'   received.
-#' @param E0 Fitted efficacy at DPC 0 on the hazard scale.
-#' @param d50 Fitted logistic midpoint.
-#' @param k Fixed logistic steepness.
-#' @param dpc_zero DPC at which efficacy is forced to zero in the underlying fit.
+#' @param E0 Efficacy at DPC 0 (the peak). For \code{shape = "flat"} this is the
+#'   efficacy at \emph{every} DPC.
+#' @param shape Character: \code{"flat"} (default; constant \code{E0}) or
+#'   \code{"logistic"} (NHP-style decay using \code{d50}, \code{k},
+#'   \code{dpc_zero}, \code{max_dpc}).
+#' @param d50 Fitted logistic midpoint (used when \code{shape = "logistic"}).
+#' @param k Fixed logistic steepness (used when \code{shape = "logistic"}).
+#' @param dpc_zero DPC at which efficacy is forced to zero in the underlying fit
+#'   (used when \code{shape = "logistic"}).
 #' @param max_dpc Maximum DPC retained in this model branch; later dosing is
-#'   assigned zero efficacy.
+#'   assigned zero efficacy (used when \code{shape = "logistic"}).
 #'
 #' @return Numeric vector of efficacy values between 0 and 1.
 #' @export
 obv_pep_efficacy_from_dpc <- function(dpc,
                                       E0 = 0.82342697,
+                                      shape = c("flat", "logistic"),
                                       d50 = 5.59722823,
                                       k = 1,
                                       dpc_zero = 15,
@@ -153,14 +165,28 @@ obv_pep_efficacy_from_dpc <- function(dpc,
   if (any(dpc < 0)) {
     stop("`dpc` must be non-negative.", call. = FALSE)
   }
-  for (nm in c("E0", "d50", "k", "dpc_zero", "max_dpc")) {
+  shape <- match.arg(shape)
+
+  if (!is.numeric(E0) || length(E0) != 1L || is.na(E0) || !is.finite(E0)) {
+    stop("`E0` must be a single finite numeric value.", call. = FALSE)
+  }
+  if (E0 < 0 || E0 > 1) {
+    stop("`E0` must be in [0, 1].", call. = FALSE)
+  }
+
+  ## Default model: flat efficacy -- E0 at every DPC, no decay. The NHP-style
+  ## logistic decay is opt-in (shape = "logistic"); the normalised logistic
+  ## cannot be made flat by any choice of d50/k/dpc_zero (as k -> 0 it tends to a
+  ## LINEAR decay to 0 at dpc_zero, not a flat line), so flat is a distinct mode.
+  if (shape == "flat") {
+    return(rep(E0, length(dpc)))
+  }
+
+  for (nm in c("d50", "k", "dpc_zero", "max_dpc")) {
     val <- get(nm, inherits = FALSE)
     if (!is.numeric(val) || length(val) != 1L || is.na(val) || !is.finite(val)) {
       stop(sprintf("`%s` must be a single finite numeric value.", nm), call. = FALSE)
     }
-  }
-  if (E0 < 0 || E0 > 1) {
-    stop("`E0` must be in [0, 1].", call. = FALSE)
   }
   if (dpc_zero <= 0 || max_dpc < 0) {
     stop("`dpc_zero` must be positive and `max_dpc` must be non-negative.", call. = FALSE)
@@ -268,17 +294,69 @@ empty_offspring_dataframe <- function() {
   out
 }
 
-resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
+## Validate the optional override list for the built-in OBV efficacy curve
+## (obv_pep_efficacy_from_dpc). NULL or list() means "use the curve defaults".
+## Names must be a subset of the curve's tunable arguments; `dpc` is supplied by
+## the simulation and cannot be overridden. The overrides feed the built-in
+## curve, which is selected when obv_pep_efficacy is either NULL (E0 from the
+## args/default) or a numeric scalar (the scalar IS the curve's E0 -- its peak
+## efficacy at DPC 0 -- with the shape from the args/default). Hence:
+##   * a custom function obv_pep_efficacy takes no curve overrides (error); and
+##   * when obv_pep_efficacy is a scalar it already supplies E0, so passing E0
+##     again in the args is a double-specification (error).
+validate_obv_efficacy_args <- function(obv_pep_efficacy, obv_pep_efficacy_args) {
+  if (is.null(obv_pep_efficacy_args)) return(invisible(NULL))
+  if (!is.list(obv_pep_efficacy_args)) {
+    stop("`obv_pep_efficacy_args` must be NULL or a named list.", call. = FALSE)
+  }
+  if (length(obv_pep_efficacy_args) == 0L) return(invisible(NULL))
+  nm <- names(obv_pep_efficacy_args)
+  if (is.null(nm) || any(nm == "")) {
+    stop("`obv_pep_efficacy_args` must be a fully named list.", call. = FALSE)
+  }
+  if (anyDuplicated(nm)) {
+    stop("`obv_pep_efficacy_args` has duplicate names.", call. = FALSE)
+  }
+  allowed <- setdiff(names(formals(obv_pep_efficacy_from_dpc)), "dpc")
+  bad <- setdiff(nm, allowed)
+  if (length(bad)) {
+    stop(sprintf("`obv_pep_efficacy_args` has unknown argument(s): %s. Allowed: %s.",
+                 paste(bad, collapse = ", "), paste(allowed, collapse = ", ")),
+         call. = FALSE)
+  }
+  if (is.function(obv_pep_efficacy)) {
+    stop("`obv_pep_efficacy_args` does not apply when `obv_pep_efficacy` is a function; parameterise that function directly.",
+         call. = FALSE)
+  }
+  if (!is.null(obv_pep_efficacy) && "E0" %in% nm) {
+    stop("`E0` is supplied via `obv_pep_efficacy` (used as the curve's E0); do not also pass it in `obv_pep_efficacy_args`.",
+         call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+resolve_obv_efficacy <- function(obv_pep_efficacy, dpc, obv_pep_efficacy_args = NULL) {
   if (length(dpc) == 0L) {
     return(numeric(0))
   }
 
-  if (is.null(obv_pep_efficacy)) {
-    value <- obv_pep_efficacy_from_dpc(dpc)
-  } else if (is.function(obv_pep_efficacy)) {
+  if (is.function(obv_pep_efficacy)) {
     value <- obv_pep_efficacy(dpc)
   } else {
-    value <- obv_pep_efficacy
+    ## Built-in NHP-derived curve. A scalar obv_pep_efficacy supplies the curve's
+    ## E0 (peak efficacy at DPC 0); the shape parameters (d50, k, dpc_zero,
+    ## max_dpc) come from obv_pep_efficacy_args or the curve defaults. NULL
+    ## obv_pep_efficacy takes E0 from the args/default too. obv_pep_efficacy_from_dpc
+    ## validates the resulting parameters (e.g. E0 in [0, 1]) and errors on bad ones.
+    curve_args <- obv_pep_efficacy_args
+    if (!is.null(obv_pep_efficacy)) {
+      curve_args <- c(list(E0 = obv_pep_efficacy), curve_args)
+    }
+    value <- if (length(curve_args)) {
+      do.call(obv_pep_efficacy_from_dpc, c(list(dpc), curve_args))
+    } else {
+      obv_pep_efficacy_from_dpc(dpc)
+    }
   }
 
   if (!is.numeric(value)) {
@@ -309,8 +387,11 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #'     \code{obv_pep_target_class} AND whose infection location is in
 #'     \code{obv_pep_target_locations}. For each pre-thinning eligible
 #'     candidate, the gate draws a treatment status (received OBV, adherent to
-#'     the course) and resolves a days-post-challenge value. The pre-thinning
-#'     counters record the size of the "treat-all-contacts" cohort.
+#'     the course) and a days-post-challenge value -- the latter either the
+#'     deterministic \code{obv_pep_dpc} mean or, when \code{obv_pep_dpc_shape} is
+#'     set, an independent Gamma draw with that mean (so individuals vary in how
+#'     quickly they are dosed). The pre-thinning counters record the size of the
+#'     "treat-all-contacts" cohort.
 #'   \item \emph{Post-thinning phase.} The gate is told which pre-thinning
 #'     candidates survived PPE/ETU thinning (\code{kept_indices}). Treatment
 #'     status is carried through consistently: a candidate that was assigned
@@ -346,9 +427,36 @@ resolve_obv_efficacy <- function(obv_pep_efficacy, dpc) {
 #' @param obv_pep_adherence Numeric in \code{[0,1]} or function(t). Probability a
 #'   recipient adheres sufficiently for efficacy to apply.
 #' @param obv_pep_dpc Non-negative numeric or function(t). Days post
-#'   challenge / exposure to first dose.
-#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc). If
-#'   NULL, the NHP-derived \code{obv_pep_efficacy_from_dpc()} helper is used.
+#'   challenge / exposure to first dose. When \code{obv_pep_dpc_shape} is NULL
+#'   this value is used directly as each recipient's DPC; when a shape is
+#'   supplied it is the \emph{mean} of the per-recipient Gamma draw. Evaluated at
+#'   the candidate's own absolute infection time, so the \emph{mean} delay may
+#'   itself vary over calendar time while the efficacy(DPC) relationship stays
+#'   fixed.
+#' @param obv_pep_dpc_shape NULL or a single finite positive numeric. If NULL
+#'   (default), DPC is deterministic and equal to \code{obv_pep_dpc} (identical
+#'   RNG stream to pre-feature runs). If supplied, each recipient's DPC is drawn
+#'   independently from \code{Gamma(shape = obv_pep_dpc_shape,
+#'   scale = obv_pep_dpc(t) / obv_pep_dpc_shape)}, which has mean
+#'   \code{obv_pep_dpc(t)} and variance \code{obv_pep_dpc(t)^2 / obv_pep_dpc_shape}
+#'   (so larger shape = tighter spread; \code{CV = 1/sqrt(shape)}). This models
+#'   individual variation in how quickly the drug is received post-exposure. A
+#'   mean of 0 yields a point mass at DPC 0.
+#' @param obv_pep_efficacy NULL, numeric in \code{[0,1]}, or function(dpc).
+#'   Selects the efficacy model. NULL or a scalar use the built-in
+#'   \code{obv_pep_efficacy_from_dpc()} curve, which is \emph{flat} by default
+#'   (constant efficacy at every DPC); a \emph{scalar} is taken as that constant
+#'   (the curve's \code{E0}). DPC-dependent decay is opt-in via
+#'   \code{obv_pep_efficacy_args} (\code{shape = "logistic"}). A function(dpc) is
+#'   used as-is.
+#' @param obv_pep_efficacy_args NULL or a named list of overrides for the
+#'   built-in \code{obv_pep_efficacy_from_dpc()} curve -- any of \code{shape},
+#'   \code{E0}, \code{d50}, \code{k}, \code{dpc_zero}, \code{max_dpc}. Applies to
+#'   the built-in curve only (when \code{obv_pep_efficacy} is NULL or a scalar);
+#'   e.g. \code{list(shape = "logistic", d50 = 4)} switches on the logistic decay.
+#'   Errors if combined with a function \code{obv_pep_efficacy}, if it names
+#'   \code{E0} while \code{obv_pep_efficacy} is a scalar (E0 then comes from
+#'   \code{obv_pep_efficacy}), or given an unknown name.
 #' @param obv_pep_target_class Character vector of offspring classes eligible
 #'   for OBV PEP. Defaults to \code{"HCW"}.
 #' @param obv_pep_target_locations Character vector of exposure locations
@@ -379,7 +487,9 @@ apply_obv_pep_gate <- function(pre_thinning,
                                obv_pep_coverage = 0,
                                obv_pep_adherence = 1,
                                obv_pep_dpc = 1,
+                               obv_pep_dpc_shape = NULL,
                                obv_pep_efficacy = NULL,
+                               obv_pep_efficacy_args = NULL,
                                obv_pep_target_class = "HCW",
                                obv_pep_target_locations = "hospital") {
 
@@ -463,6 +573,12 @@ apply_obv_pep_gate <- function(pre_thinning,
   validate_probability_or_time_varying(obv_pep_coverage, "obv_pep_coverage")
   validate_probability_or_time_varying(obv_pep_adherence, "obv_pep_adherence")
   validate_nonnegative_or_time_varying(obv_pep_dpc, "obv_pep_dpc")
+  if (!is.null(obv_pep_dpc_shape) &&
+      (!is.numeric(obv_pep_dpc_shape) || length(obv_pep_dpc_shape) != 1L ||
+       !is.finite(obv_pep_dpc_shape) || obv_pep_dpc_shape <= 0)) {
+    stop("`obv_pep_dpc_shape` must be NULL or a single finite positive numeric.", call. = FALSE)
+  }
+  validate_obv_efficacy_args(obv_pep_efficacy, obv_pep_efficacy_args)
 
   ## --- Phase 1: pre-thinning eligibility, treatment status, DPC. ---
   ## Status vectors span the full pre-thinning set so they can be indexed by
@@ -507,11 +623,29 @@ apply_obv_pep_gate <- function(pre_thinning,
       status_adherent[pre_received_idx] <- pre_adherent
       num_treated$pre_adherent <- sum(pre_adherent)
 
-      status_dpc[pre_received_idx] <- resolve_nonnegative(
+      ## obv_pep_dpc(t) gives the MEAN days-post-challenge for a candidate
+      ## infected at calendar time t. With obv_pep_dpc_shape = NULL the DPC is
+      ## that mean exactly (deterministic; same RNG stream as pre-feature runs).
+      ## Otherwise each recipient draws its own DPC from a Gamma with that mean
+      ## and the supplied fixed shape -- Gamma(shape = k, scale = mean / k) has
+      ## mean `mean` and variance mean^2 / k -- so individuals vary in how quickly
+      ## they receive the drug post-exposure. This per-individual draw IS the
+      ## realised (receipt - infection) delay. A mean of 0 gives a point mass at 0
+      ## (rgamma returns 0 for scale 0), so same-day dosing stays exact.
+      dpc_mean <- resolve_nonnegative(
         obv_pep_dpc,
         pre_thinning$infection_time_absolute[pre_received_idx],
         "obv_pep_dpc"
       )
+      if (is.null(obv_pep_dpc_shape)) {
+        status_dpc[pre_received_idx] <- dpc_mean
+      } else {
+        status_dpc[pre_received_idx] <- rgamma(
+          n     = length(dpc_mean),
+          shape = obv_pep_dpc_shape,
+          scale = dpc_mean / obv_pep_dpc_shape
+        )
+      }
     }
   }
 
@@ -531,7 +665,8 @@ apply_obv_pep_gate <- function(pre_thinning,
 
   if (any(kept_adherent)) {
     adh_local_idx <- which(kept_adherent)
-    efficacy_vals <- resolve_obv_efficacy(obv_pep_efficacy, kept_dpc[adh_local_idx])
+    efficacy_vals <- resolve_obv_efficacy(obv_pep_efficacy, kept_dpc[adh_local_idx],
+                                          obv_pep_efficacy_args = obv_pep_efficacy_args)
     prevented <- as.logical(rbinom(n = length(adh_local_idx), size = 1, prob = efficacy_vals))
     keep[adh_local_idx[prevented]] <- FALSE
     num_treated$prevented <- sum(prevented)

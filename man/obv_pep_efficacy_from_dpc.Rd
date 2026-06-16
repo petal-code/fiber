@@ -7,6 +7,7 @@
 obv_pep_efficacy_from_dpc(
   dpc,
   E0 = 0.82342697,
+  shape = c("flat", "logistic"),
   d50 = 5.59722823,
   k = 1,
   dpc_zero = 15,
@@ -17,24 +18,36 @@ obv_pep_efficacy_from_dpc(
 \item{dpc}{Numeric vector. Days post challenge/exposure at which OBV is first
 received.}
 
-\item{E0}{Fitted efficacy at DPC 0 on the hazard scale.}
+\item{E0}{Efficacy at DPC 0 (the peak). For \code{shape = "flat"} this is the
+efficacy at \emph{every} DPC.}
 
-\item{d50}{Fitted logistic midpoint.}
+\item{shape}{Character: \code{"flat"} (default; constant \code{E0}) or
+\code{"logistic"} (NHP-style decay using \code{d50}, \code{k},
+\code{dpc_zero}, \code{max_dpc}).}
 
-\item{k}{Fixed logistic steepness.}
+\item{d50}{Fitted logistic midpoint (used when \code{shape = "logistic"}).}
 
-\item{dpc_zero}{DPC at which efficacy is forced to zero in the underlying fit.}
+\item{k}{Fixed logistic steepness (used when \code{shape = "logistic"}).}
+
+\item{dpc_zero}{DPC at which efficacy is forced to zero in the underlying fit
+(used when \code{shape = "logistic"}).}
 
 \item{max_dpc}{Maximum DPC retained in this model branch; later dosing is
-assigned zero efficacy.}
+assigned zero efficacy (used when \code{shape = "logistic"}).}
 }
 \value{
 Numeric vector of efficacy values between 0 and 1.
 }
 \description{
-This helper implements the current NHP-derived working curve used for the
-first OBV/ODV branch. The defaults are the maximum-likelihood estimates from
-\code{ODV_PEP_plot1_only_with_ribbon_GOF.R} using the scaled logistic model with
-\code{dpc_zero = 15} and \code{k = 1}. For this model branch, efficacy is set to zero
-after \code{max_dpc = 10}, so the fitted line is intentionally cut at 10 DPC.
+Returns OBV PEP efficacy for each DPC value. By default (\code{shape = "flat"})
+efficacy is \emph{constant} at \code{E0} for every DPC -- a deliberately
+model-neutral default, since the DPC-to-efficacy relationship is not yet
+pinned down and the previous logistic constants were placeholders. Set
+\code{shape = "logistic"} to use the NHP-derived scaled-logistic decay
+(efficacy \code{E0} at DPC 0, falling to 0 by \code{dpc_zero} and forced to 0
+beyond \code{max_dpc}); its default \code{d50}/\code{k}/\code{dpc_zero}/
+\code{max_dpc} are the maximum-likelihood estimates from
+\code{ODV_PEP_plot1_only_with_ribbon_GOF.R}. The curve is separable in
+\code{E0}: \code{eff(dpc) = E0 * shape(dpc)} with \code{shape(0) = 1}, so
+\code{E0} is a pure vertical scale equal to the peak (DPC 0) efficacy.
 }
