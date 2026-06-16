@@ -554,17 +554,18 @@ test_that("summarise_output() exposes the expected OBV PEP field names", {
                               paste(missing_fields, collapse = ", ")))
 })
 
-## --- per-individual stochastic DPC (obv_pep_dpc_shape) ------------------
-## obv_pep_dpc(t) is the MEAN days-post-challenge; obv_pep_dpc_shape turns the
-## (previously deterministic) DPC into a per-recipient Gamma draw with that mean,
-## modelling individual variation in how quickly the drug is received. The draw
-## IS the realised (receipt - infection) delay. NULL (default) preserves the
-## deterministic behaviour bit-for-bit.
+## --- per-individual stochastic DPC (obv_pep_dpc_sd) ------------------
+## obv_pep_dpc(t) is the MEAN days-post-challenge; obv_pep_dpc_sd turns the
+## (previously deterministic) DPC into a per-recipient Gamma draw with that mean
+## and a fixed standard deviation (a fixed absolute spread, so variance ~ sd^2
+## regardless of the mean), modelling individual variation in how quickly the
+## drug is received. The draw IS the realised (receipt - infection) delay. NULL
+## (default) preserves the deterministic behaviour bit-for-bit.
 
 ## All-eligible HCW-hospital candidate set, fully covered & adherent, with
 ## efficacy = 0 so nothing is prevented -- every candidate is then a recipient
 ## whose drawn DPC surfaces in metadata$obv_pep_dpc, isolating the DPC draw.
-dpc_gate_all_treated <- function(n, dpc, shape, seed = 1L,
+dpc_gate_all_treated <- function(n, dpc, sd, seed = 1L,
                                  infection_time_absolute = 10) {
   pre_thinning <- list(
     infection_location      = rep("hospital", n),
@@ -579,48 +580,51 @@ dpc_gate_all_treated <- function(n, dpc, shape, seed = 1L,
     obv_pep_coverage         = 1,
     obv_pep_adherence        = 1,
     obv_pep_dpc              = dpc,
-    obv_pep_dpc_shape        = shape,
+    obv_pep_dpc_sd           = sd,
     obv_pep_efficacy         = 0,
     obv_pep_target_class     = "HCW",
     obv_pep_target_locations = "hospital"
   )
 }
 
-test_that("obv_pep_dpc_shape = NULL keeps DPC deterministic at the mean", {
-  res <- dpc_gate_all_treated(n = 200, dpc = 3, shape = NULL)
+test_that("obv_pep_dpc_sd = NULL keeps DPC deterministic at the mean", {
+  res <- dpc_gate_all_treated(n = 200, dpc = 3, sd = NULL)
   expect_true(all(res$metadata$obv_pep_received))
   ## Every recipient's DPC is exactly the mean -- no draw, no spread.
   expect_equal(res$metadata$obv_pep_dpc, rep(3, 200))
 })
 
-test_that("obv_pep_dpc_shape draws per-recipient DPC with the requested mean and variance", {
-  res <- dpc_gate_all_treated(n = 20000, dpc = 4, shape = 2, seed = 42L)
+test_that("obv_pep_dpc_sd draws per-recipient DPC with the requested mean and variance", {
+  res <- dpc_gate_all_treated(n = 20000, dpc = 4, sd = 2, seed = 42L)
   dpc <- res$metadata$obv_pep_dpc
   expect_length(dpc, 20000)
   expect_true(all(is.finite(dpc)))
   expect_true(all(dpc >= 0))                            # Gamma support is non-negative
   expect_false(isTRUE(all.equal(dpc, rep(4, 20000))))  # genuine individual variation
-  ## Sample mean recovers obv_pep_dpc; sample variance ~ mean^2 / shape = 16/2 = 8.
+  ## Sample mean recovers obv_pep_dpc; sample variance ~ sd^2 = 4.
   expect_equal(mean(dpc), 4, tolerance = 0.05)
-  expect_equal(var(dpc),  8, tolerance = 0.2)
+  expect_equal(var(dpc),  4, tolerance = 0.2)
 })
 
-test_that("larger obv_pep_dpc_shape gives a tighter DPC spread (same mean)", {
-  tight <- dpc_gate_all_treated(n = 20000, dpc = 5, shape = 20, seed = 7L)
-  loose <- dpc_gate_all_treated(n = 20000, dpc = 5, shape = 1,  seed = 7L)
+test_that("smaller obv_pep_dpc_sd gives a tighter DPC spread (same mean)", {
+  tight <- dpc_gate_all_treated(n = 20000, dpc = 5, sd = 1, seed = 7L)
+  loose <- dpc_gate_all_treated(n = 20000, dpc = 5, sd = 4, seed = 7L)
   expect_lt(var(tight$metadata$obv_pep_dpc), var(loose$metadata$obv_pep_dpc))
   expect_equal(mean(tight$metadata$obv_pep_dpc), 5, tolerance = 0.05)
   expect_equal(mean(loose$metadata$obv_pep_dpc), 5, tolerance = 0.1)
+  ## Variance tracks the requested sd^2 (1 vs 16), not the mean.
+  expect_equal(var(tight$metadata$obv_pep_dpc), 1,  tolerance = 0.15)
+  expect_equal(var(loose$metadata$obv_pep_dpc), 16, tolerance = 0.15)
 })
 
 test_that("stochastic DPC draw is reproducible under a fixed seed", {
-  r1 <- dpc_gate_all_treated(n = 500, dpc = 3, shape = 2, seed = 99L)
-  r2 <- dpc_gate_all_treated(n = 500, dpc = 3, shape = 2, seed = 99L)
+  r1 <- dpc_gate_all_treated(n = 500, dpc = 3, sd = 2, seed = 99L)
+  r2 <- dpc_gate_all_treated(n = 500, dpc = 3, sd = 2, seed = 99L)
   expect_equal(r1$metadata$obv_pep_dpc, r2$metadata$obv_pep_dpc)
 })
 
-test_that("a zero mean yields DPC 0 even with a shape set (degenerate point mass)", {
-  res <- dpc_gate_all_treated(n = 100, dpc = 0, shape = 2)
+test_that("a zero mean yields DPC 0 even with an sd set (degenerate point mass)", {
+  res <- dpc_gate_all_treated(n = 100, dpc = 0, sd = 2)
   expect_equal(res$metadata$obv_pep_dpc, rep(0, 100))
 })
 
@@ -641,7 +645,7 @@ test_that("a time-varying mean is honoured per-recipient under stochastic DPC", 
     obv_pep_coverage         = 1,
     obv_pep_adherence        = 1,
     obv_pep_dpc              = mean_fn,
-    obv_pep_dpc_shape        = 5,
+    obv_pep_dpc_sd           = 2,
     obv_pep_efficacy         = 0
   )
   dpc <- res$metadata$obv_pep_dpc
@@ -649,7 +653,7 @@ test_that("a time-varying mean is honoured per-recipient under stochastic DPC", 
   expect_equal(mean(dpc[4001:8000]), 12, tolerance = 0.2)
 })
 
-test_that("obv_pep_dpc_shape validation rejects non-positive / non-scalar values", {
+test_that("obv_pep_dpc_sd validation rejects non-positive / non-scalar values", {
   base <- list(
     pre_thinning = list(
       infection_location      = rep("hospital", 3),
@@ -661,18 +665,18 @@ test_that("obv_pep_dpc_shape validation rejects non-positive / non-scalar values
     obv_pep_coverage = 1,
     obv_pep_efficacy = 0
   )
-  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = 0))),
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = 0))),
                "must be NULL or a single finite positive numeric")
-  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = -1))),
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = -1))),
                "positive")
-  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = c(1, 2)))),
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = c(1, 2)))),
                "single")
-  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = Inf))),
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = Inf))),
                "finite")
-  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = "a"))),
+  expect_error(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = "a"))),
                "numeric")
   ## NULL (the default) is accepted.
-  expect_silent(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_shape = NULL))))
+  expect_silent(do.call(apply_obv_pep_gate, c(base, list(obv_pep_dpc_sd = NULL))))
 })
 
 test_that("stochastic DPC flows through branching_process_main: varying, finite, reproducible", {
@@ -683,7 +687,7 @@ test_that("stochastic DPC flows through branching_process_main: varying, finite,
     obv_pep_coverage                     = 1,
     obv_pep_adherence                    = 1,
     obv_pep_dpc                          = 3,
-    obv_pep_dpc_shape                    = 2,
+    obv_pep_dpc_sd                       = 2,
     obv_pep_efficacy                     = 0,
     ppe_coverage_hcw                     = 0,
     etu_efficacy                         = 0,
@@ -705,8 +709,8 @@ test_that("stochastic DPC flows through branching_process_main: varying, finite,
   expect_gt(var(rec), 0)               # genuine per-individual variation in DPC
   expect_equal(r1$tdf, r2$tdf)         # reproducible under a fixed seed
 
-  ## Deterministic counterpart: same scenario, shape = NULL => DPC pinned at the mean.
-  det <- do.call(branching_process_main, utils::modifyList(args, list(obv_pep_dpc_shape = NULL)))
+  ## Deterministic counterpart: same scenario, sd = NULL => DPC pinned at the mean.
+  det <- do.call(branching_process_main, utils::modifyList(args, list(obv_pep_dpc_sd = NULL)))
   rec_det <- det$tdf$obv_pep_dpc[det$tdf$obv_pep_received]
   expect_gt(length(rec_det), 5)
   expect_equal(rec_det, rep(3, length(rec_det)))

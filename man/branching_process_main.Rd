@@ -43,7 +43,7 @@ branching_process_main(
   obv_pep_coverage = 0,
   obv_pep_adherence = 1,
   obv_pep_dpc = 1,
-  obv_pep_dpc_shape = NULL,
+  obv_pep_dpc_sd = NULL,
   obv_pep_efficacy = NULL,
   obv_pep_efficacy_args = NULL,
   obv_pep_target_class = "HCW",
@@ -177,15 +177,18 @@ adhered to.}
 
 \item{obv_pep_dpc}{Non-negative numeric or function(t). Days post challenge/exposure to first
 dose, evaluated at each candidate's own absolute infection time. With
-\code{obv_pep_dpc_shape = NULL} this is each recipient's DPC exactly; with a shape it is the
+\code{obv_pep_dpc_sd = NULL} this is each recipient's DPC exactly; with an sd it is the
 \emph{mean} DPC, so the average treatment delay can vary over calendar time while the
 efficacy(DPC) relationship stays fixed.}
 
-\item{obv_pep_dpc_shape}{NULL or a single positive numeric. NULL (default) keeps DPC
+\item{obv_pep_dpc_sd}{NULL or a single positive numeric. NULL (default) keeps DPC
 deterministic at \code{obv_pep_dpc} (bit-for-bit identical to pre-feature runs). If supplied,
-each recipient draws an independent DPC from \code{Gamma(shape = obv_pep_dpc_shape, scale = obv_pep_dpc(t) / obv_pep_dpc_shape)} -- mean \code{obv_pep_dpc(t)}, variance
-\code{obv_pep_dpc(t)^2 / obv_pep_dpc_shape} (\code{CV = 1/sqrt(shape)}) -- giving individual
-variation in how quickly the drug is received post-exposure.}
+it is the standard deviation of the per-recipient DPC: each recipient draws an independent DPC
+from a Gamma reparameterised from (mean, sd) as
+\code{Gamma(shape = obv_pep_dpc(t)^2 / obv_pep_dpc_sd^2, scale = obv_pep_dpc_sd^2 / obv_pep_dpc(t))} -- mean \code{obv_pep_dpc(t)}, variance
+\code{obv_pep_dpc_sd^2} (\code{CV = obv_pep_dpc_sd / obv_pep_dpc(t)}) -- giving individual
+variation in how quickly the drug is received post-exposure. The spread is a fixed absolute sd
+even when the mean varies over time (a fixed shape would instead hold the CV constant).}
 
 \item{obv_pep_efficacy}{NULL, numeric in \verb{[0, 1]}, or function(dpc). Selects the efficacy model.
 NULL or a scalar use the built-in \code{\link[=obv_pep_efficacy_from_dpc]{obv_pep_efficacy_from_dpc()}} curve, which is \strong{flat} by
