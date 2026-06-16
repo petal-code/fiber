@@ -240,7 +240,7 @@ branching_process_main <- function(
   obv_pep_dpc = 1,                           # scalar/function(t): days post challenge/exposure to first dose (mean DPC when a shape is set)
   obv_pep_dpc_shape = NULL,                  # NULL = deterministic DPC; positive scalar = per-recipient Gamma(mean = obv_pep_dpc(t), shape) draw
   obv_pep_efficacy = NULL,                   # NULL/function(dpc)/scalar: efficacy; NULL uses obv_pep_efficacy_from_dpc()
-  obv_pep_efficacy_args = NULL,              # NULL or named list of overrides for obv_pep_efficacy_from_dpc() (E0/d50/k/dpc_zero/max_dpc); used only when obv_pep_efficacy = NULL
+  obv_pep_efficacy_args = NULL,              # NULL or named list of overrides for obv_pep_efficacy_from_dpc() (shape/E0/d50/k/dpc_zero/max_dpc); used when obv_pep_efficacy is NULL or a scalar (errors if a function)
   obv_pep_target_class = "HCW",              # character vector: offspring classes eligible for OBV PEP
   obv_pep_target_locations = "hospital",     # character vector: exposure settings eligible for OBV PEP
 
