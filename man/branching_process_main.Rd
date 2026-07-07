@@ -266,7 +266,10 @@ zero-time dummy parent, so \code{parent} and \code{generation} are \code{NA} and
 \code{time_infection_relative} equals \code{time_infection_absolute}.}
 \item{\code{sim_info}}{Scalar run metadata: \code{population}, \code{hcw_per_capita},
 \code{hcw_total}, \code{seed}, \code{obv_pep_enabled}, and the \code{obv_pep_num_treated}
-counters.}
+counters. Also carries \code{params}, the bundle of transmission /
+natural-history / OBV parameters this run used, so post-hoc tools such as
+\code{\link{estimate_leaky_onward}()} can replay the model without re-threading
+every argument by hand.}
 }
 }
 \description{

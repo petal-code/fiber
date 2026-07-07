@@ -2,6 +2,7 @@
 
 export(branching_process_main)
 export(compute_reproduction_number)
+export(estimate_leaky_onward)
 export(make_time_varying)
 export(obv_pep_efficacy_from_dpc)
 export(offspring_function_funeral)
