@@ -168,7 +168,10 @@
 #'       `time_infection_relative` equals `time_infection_absolute`.}
 #'     \item{`sim_info`}{Scalar run metadata: `population`, `hcw_per_capita`,
 #'       `hcw_total`, `seed`, `obv_pep_enabled`, and the `obv_pep_num_treated`
-#'       counters.}
+#'       counters. Also carries `params`, the bundle of transmission /
+#'       natural-history / OBV parameters this run used, so post-hoc tools such
+#'       as [estimate_leaky_onward()] can replay the model without re-threading
+#'       every argument by hand.}
 #'   }
 #'
 #' @export
@@ -944,6 +947,66 @@ branching_process_main <- function(
   attr(tdf, "hcw_remaining") <- hcw_available
   attr(tdf, "obv_pep_num_treated") <- obv_num_treated
 
+  ## Bundle the transmission / natural-history / OBV parameters this run used so
+  ## downstream post-hoc tools (notably estimate_leaky_onward(), which replays the
+  ## averted `prevented_completed` infections through the same offspring +
+  ## completion machinery) can reconstruct the model without re-threading ~40
+  ## arguments by hand. Purely additive: no RNG is drawn and no existing output is
+  ## changed. Deliberately excludes population / seeding / final-size / seed, which
+  ## describe the *run*, not the transmission/natural-history process being replayed.
+  run_params <- list(
+    mn_offspring_genPop                  = mn_offspring_genPop,
+    overdisp_offspring_genPop            = overdisp_offspring_genPop,
+    Tg_shape_genPop                      = Tg_shape_genPop,
+    Tg_rate_genPop                       = Tg_rate_genPop,
+    mn_offspring_hcw                     = mn_offspring_hcw,
+    overdisp_offspring_hcw               = overdisp_offspring_hcw,
+    Tg_shape_hcw                         = Tg_shape_hcw,
+    Tg_rate_hcw                          = Tg_rate_hcw,
+    mn_offspring_funeral                 = mn_offspring_funeral,
+    overdisp_offspring_funeral           = overdisp_offspring_funeral,
+    Tg_shape_funeral                     = Tg_shape_funeral,
+    Tg_rate_funeral                      = Tg_rate_funeral,
+    incubation_period                    = incubation_period,
+    onset_to_hospitalisation             = onset_to_hospitalisation,
+    hospitalisation_delay_factor         = hospitalisation_delay_factor,
+    onset_to_death                       = onset_to_death,
+    onset_to_recovery                    = onset_to_recovery,
+    hospitalisation_to_death             = hospitalisation_to_death,
+    hospitalisation_to_recovery          = hospitalisation_to_recovery,
+    prob_symptomatic                     = prob_symptomatic,
+    prob_hospitalised_hcw                = prob_hospitalised_hcw,
+    prob_hospitalised_genPop             = prob_hospitalised_genPop,
+    prob_death_comm                      = prob_death_comm,
+    prob_death_hosp                      = prob_death_hosp,
+    prob_hcw_cond_genPop_comm            = prob_hcw_cond_genPop_comm,
+    prob_hcw_cond_genPop_hospital        = prob_hcw_cond_genPop_hospital,
+    prob_hcw_cond_hcw_comm               = prob_hcw_cond_hcw_comm,
+    prob_hcw_cond_hcw_hospital           = prob_hcw_cond_hcw_hospital,
+    prob_hospital_cond_hcw_preAdm        = prob_hospital_cond_hcw_preAdm,
+    ppe_coverage_hcw                     = ppe_coverage_hcw,
+    ppe_efficacy                         = ppe_efficacy,
+    prop_etu                             = prop_etu,
+    etu_efficacy                         = etu_efficacy,
+    general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
+    obv_pep_enabled                      = obv_pep_enabled,
+    obv_pep_coverage                     = obv_pep_coverage,
+    obv_pep_adherence                    = obv_pep_adherence,
+    obv_pep_dpc                          = obv_pep_dpc,
+    obv_pep_dpc_sd                       = obv_pep_dpc_sd,
+    obv_pep_efficacy                     = obv_pep_efficacy,
+    obv_pep_efficacy_args                = obv_pep_efficacy_args,
+    obv_pep_target_class                 = obv_pep_target_class,
+    obv_pep_target_locations             = obv_pep_target_locations,
+    p_unsafe_funeral_comm_hcw            = p_unsafe_funeral_comm_hcw,
+    p_unsafe_funeral_hosp_hcw            = p_unsafe_funeral_hosp_hcw,
+    p_unsafe_funeral_comm_genPop         = p_unsafe_funeral_comm_genPop,
+    p_unsafe_funeral_hosp_genPop         = p_unsafe_funeral_hosp_genPop,
+    safe_funeral_efficacy                = safe_funeral_efficacy,
+    prob_hcw_cond_funeral_hcw            = prob_hcw_cond_funeral_hcw,
+    prob_hcw_cond_funeral_genPop         = prob_hcw_cond_funeral_genPop
+  )
+
   out <- list(
     tdf = tdf,
     ## Counterfactual completed offspring info for the infections OBV prevented
@@ -956,7 +1019,10 @@ branching_process_main <- function(
       hcw_total           = hcw_total,
       seed                = seed,
       obv_pep_enabled     = obv_pep_enabled,
-      obv_pep_num_treated = obv_num_treated
+      obv_pep_num_treated = obv_num_treated,
+      ## Transmission / natural-history / OBV parameter bundle for post-hoc tools
+      ## (e.g. estimate_leaky_onward()). See run_params construction above.
+      params              = run_params
     )
   )
 
