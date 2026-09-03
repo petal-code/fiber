@@ -1,45 +1,65 @@
-## Contact-first transmission: risk-tier structure and R0 <-> baseline-risk algebra.
+## Contact-first transmission: risk-tier structure and its runtime helpers.
 ##
-## The model can generate transmission in one of two ways (see the offspring
-## functions and branching_process_main):
+## fiber generates transmission contact-first. The Negative Binomial draw in each
+## offspring function is the number of CONTACTS (exposure events) a case has.
+## Every contact is assigned a risk tier; a contact in tier l transmits with
+## probability
 ##
-##   * "offspring mode" (legacy): the Negative Binomial draw IS the number of
-##     secondary infections. Supply `mn_offspring_*` / `overdisp_offspring_*`.
-##   * "contact mode": the Negative Binomial draw is the number of CONTACTS
-##     (exposure events). Each contact is assigned a risk tier, and transmits
-##     with probability `baseline_risk * relative_risk[tier]`. Supply
-##     `mn_contacts_*` / `overdisp_contacts_*` plus either `baseline_risk_*`
-##     or a target `r0_*` to solve the baseline risk from.
+##     baseline_risk(t) * relative_risk[l]
+##
+## resolved at that contact's own calendar time. Contacts that transmit then pass
+## through the intervention layers (PPE, hospital quarantine, isolation, safe
+## burial) exactly as before.
 ##
 ## Because each contact's tier is drawn independently, a contact's marginal
-## transmission probability is `baseline_risk * mean_relative_risk` regardless
-## of which tier it lands in. That makes the expected offspring count
+## transmission probability is `baseline_risk * mean_relative_risk` whatever tier
+## it lands in. Two consequences worth knowing:
 ##
-##     R0 = mn_contacts * baseline_risk * mean_relative_risk
+##   * The expected offspring count for a route is
+##         mn_contacts * baseline_risk * mean_relative_risk
+##     before intervention thinning, so the contact overdispersion never enters
+##     R0 (thinning a Negative Binomial leaves its mean unchanged) and can be
+##     used to dial superspreading independently of the calibration.
 ##
-## which is the identity that all of the helpers below invert, and it is why
-## the contact overdispersion never enters R0: thinning a Negative Binomial
-## does not change its mean.
+##   * The tier mix among realised INFECTIONS is not the tier mix among contacts:
+##     higher-risk tiers are over-represented, with weights proportional to
+##     fractions * relative_risk. `case_weights` below carries that distribution,
+##     and it is what the R0 approximation must average over when a downstream
+##     process (contact tracing) depends on the tier a case was infected in.
+##
+## Risk tiers also carry a per-tier contact-tracing probability, which is the
+## route by which they drive the non-pharmaceutical interventions: a traced case
+## may be isolated before admission, and may be admitted sooner or more often.
 
 #' Define a contact risk-tier structure
 #'
 #' Builds the risk-tier structure used by fiber's contact-first transmission
 #' model. Contacts are partitioned into tiers by \code{fractions}; each tier
 #' carries a \code{relative_risk} multiplier applied to a single baseline
-#' per-contact transmission probability. The tier named by \code{reference} is
-#' the one the baseline risk refers to: all relative risks are divided through
-#' by that tier's value, so the baseline risk parameter is literally the
-#' per-contact transmission probability of the reference tier.
+#' per-contact transmission probability, and a \code{trace_prob} giving the
+#' probability a contact in that tier is reached by contact tracing at full
+#' programme coverage.
 #'
-#' The default is five equally sized tiers with equal relative risk, i.e. a
-#' deliberately flat structure that adds the contact bookkeeping without
-#' imposing any heterogeneity. Use \code{\link{contact_risk_gradient}} to build
-#' a graded structure from a single spread parameter.
+#' The tier named by \code{reference} is the one the baseline risk refers to: all
+#' relative risks are divided through by that tier's value, so the baseline risk
+#' parameter is literally the per-contact transmission probability of the
+#' reference tier.
+#'
+#' The default is five equally sized tiers with equal relative risk and no
+#' tracing -- a deliberately flat structure that adds the contact bookkeeping
+#' without imposing any heterogeneity or intervention effect. Use
+#' \code{\link{contact_risk_gradient}} to build a graded structure from a single
+#' spread parameter.
 #'
 #' @param fractions Numeric vector of tier shares. Must be non-negative and sum
 #'   to 1. Its length sets the number of tiers. Defaults to five equal shares.
 #' @param relative_risk Numeric vector, same length as \code{fractions}. Risk of
 #'   each tier relative to the reference tier. Must be positive and finite.
+#' @param trace_prob Numeric vector in \code{[0,1]}, same length as
+#'   \code{fractions} (or a single value recycled across tiers). Probability that
+#'   a contact in each tier is successfully traced, at full programme coverage.
+#'   Multiplied by the time-varying \code{trace_coverage(t)} programme lever at
+#'   run time. Defaults to 0 (no tracing).
 #' @param reference Integer index (1-based) of the reference tier -- the tier the
 #'   baseline risk parameter describes. Defaults to the first tier.
 #' @param labels Optional character vector of tier names, same length as
@@ -47,21 +67,28 @@
 #'   \code{"risk_1"}, \code{"risk_2"}, ...
 #'
 #' @return An object of class \code{"fiber_contact_risk"}: a list with the
-#'   validated \code{fractions}, normalised \code{relative_risk}, \code{reference},
-#'   \code{labels}, \code{n_levels}, and the derived \code{mean_relative_risk}
-#'   (the fraction-weighted mean, which scales R0) and \code{max_relative_risk}
-#'   (which caps the feasible baseline risk at \code{1 / max_relative_risk}).
+#'   validated \code{fractions}, normalised \code{relative_risk},
+#'   \code{trace_prob}, \code{reference}, \code{labels}, \code{n_levels}, and the
+#'   derived quantities \code{mean_relative_risk} (the fraction-weighted mean,
+#'   which scales R0), \code{max_relative_risk} (which caps the feasible baseline
+#'   risk at \code{1 / max_relative_risk}), \code{case_weights} (the tier
+#'   distribution among realised infections, proportional to
+#'   \code{fractions * relative_risk}) and \code{mean_trace_prob_cases} (the
+#'   case-weighted mean trace probability, which is what the R0 approximation
+#'   needs).
 #'
 #' @examples
-#' ## Default: five flat tiers
+#' ## Default: five flat tiers, no tracing
 #' make_contact_risk()
 #'
-#' ## Most contacts low risk, a small high-risk tail
+#' ## Most contacts low risk, a small high-risk tail that is easier to trace
 #' make_contact_risk(fractions     = c(0.6, 0.25, 0.1, 0.04, 0.01),
-#'                   relative_risk = c(1, 2, 5, 10, 25))
+#'                   relative_risk = c(1, 2, 5, 10, 25),
+#'                   trace_prob    = c(0.1, 0.2, 0.4, 0.7, 0.9))
 #' @export
 make_contact_risk <- function(fractions     = rep(0.2, 5),
                               relative_risk = rep(1, 5),
+                              trace_prob    = 0,
                               reference     = 1L,
                               labels        = NULL) {
 
@@ -80,6 +107,13 @@ make_contact_risk <- function(fractions     = rep(0.2, 5),
   if (!is.numeric(relative_risk) || length(relative_risk) != n_levels ||
       any(!is.finite(relative_risk)) || any(relative_risk <= 0)) {
     stop(sprintf("`relative_risk` must be a numeric vector of %d finite, strictly positive values (same length as `fractions`).",
+                 n_levels), call. = FALSE)
+  }
+
+  if (length(trace_prob) == 1L) trace_prob <- rep(trace_prob, n_levels)
+  if (!is.numeric(trace_prob) || length(trace_prob) != n_levels ||
+      any(!is.finite(trace_prob)) || any(trace_prob < 0) || any(trace_prob > 1)) {
+    stop(sprintf("`trace_prob` must be a single value or a numeric vector of %d values in [0, 1].",
                  n_levels), call. = FALSE)
   }
 
@@ -106,20 +140,24 @@ make_contact_risk <- function(fractions     = rep(0.2, 5),
     stop("`labels` must be unique.", call. = FALSE)
   }
 
+  mean_relative_risk <- sum(fractions * relative_risk)
+  ## Tier distribution among realised infections. A contact in a high-risk tier
+  ## is more likely to become a case, so cases over-represent those tiers with
+  ## weights proportional to fractions * relative_risk.
+  case_weights <- fractions * relative_risk / mean_relative_risk
+
   structure(
     list(
-      fractions          = as.numeric(fractions),
-      relative_risk      = as.numeric(relative_risk),
-      reference          = reference,
-      labels             = labels,
-      n_levels           = n_levels,
-      ## Fraction-weighted mean relative risk. This is the factor that turns a
-      ## baseline risk into an average per-contact transmission probability, and
-      ## hence the factor linking mean contacts to R0.
-      mean_relative_risk = sum(fractions * relative_risk),
-      ## Largest relative risk, which sets the feasibility ceiling: the top tier's
-      ## transmission probability (baseline * max_relative_risk) must stay <= 1.
-      max_relative_risk  = max(relative_risk)
+      fractions             = as.numeric(fractions),
+      relative_risk         = as.numeric(relative_risk),
+      trace_prob            = as.numeric(trace_prob),
+      reference             = reference,
+      labels                = labels,
+      n_levels              = n_levels,
+      mean_relative_risk    = mean_relative_risk,
+      max_relative_risk     = max(relative_risk),
+      case_weights          = case_weights,
+      mean_trace_prob_cases = sum(case_weights * trace_prob)
     ),
     class = "fiber_contact_risk"
   )
@@ -134,12 +172,15 @@ print.fiber_contact_risk <- function(x, ...) {
     label         = x$labels,
     fraction      = x$fractions,
     relative_risk = x$relative_risk,
+    trace_prob    = x$trace_prob,
+    case_share    = x$case_weights,
     stringsAsFactors = FALSE
   ), row.names = FALSE)
   cat(sprintf("  mean relative risk: %.4f  (R0 = mean contacts x baseline risk x this)\n",
               x$mean_relative_risk))
   cat(sprintf("  max relative risk:  %.4f  (baseline risk must be <= %.4f)\n",
               x$max_relative_risk, 1 / x$max_relative_risk))
+  cat(sprintf("  case-weighted trace probability: %.4f\n", x$mean_trace_prob_cases))
   invisible(x)
 }
 
@@ -148,11 +189,17 @@ print.fiber_contact_risk <- function(x, ...) {
 #' Convenience constructor for a log-spaced gradient of relative risks, so the
 #' amount of contact heterogeneity can be swept with one number instead of
 #' hand-writing a vector of weights. Relative risks run from 1 (the reference,
-#' lowest tier) up to \code{ratio} across \code{n_levels} tiers.
+#' lowest tier) up to \code{ratio} across \code{n_levels} tiers. Trace
+#' probabilities can be given the same treatment via \code{trace_prob_range},
+#' since higher-risk contacts (household, caregiving) are typically both more
+#' infectious and easier to identify.
 #'
 #' @param n_levels Integer, number of tiers. Defaults to 5.
 #' @param ratio Positive numeric. Ratio of the top tier's risk to the reference
 #'   tier's risk. \code{ratio = 1} reproduces a flat structure.
+#' @param trace_prob_range Either a single probability applied to every tier, or
+#'   a length-2 vector \code{c(lowest, highest)} linearly interpolated across
+#'   tiers. Defaults to 0 (no tracing).
 #' @param fractions Optional numeric vector of tier shares (must sum to 1).
 #'   Defaults to equal shares.
 #' @param reference Integer index of the reference tier. Defaults to 1 (the
@@ -162,13 +209,15 @@ print.fiber_contact_risk <- function(x, ...) {
 #' @return An object of class \code{"fiber_contact_risk"}.
 #'
 #' @examples
-#' contact_risk_gradient(n_levels = 5, ratio = 10)
+#' contact_risk_gradient(n_levels = 5, ratio = 10,
+#'                       trace_prob_range = c(0.1, 0.8))
 #' @export
-contact_risk_gradient <- function(n_levels  = 5,
-                                  ratio     = 10,
-                                  fractions = NULL,
-                                  reference = 1L,
-                                  labels    = NULL) {
+contact_risk_gradient <- function(n_levels         = 5,
+                                  ratio            = 10,
+                                  trace_prob_range = 0,
+                                  fractions        = NULL,
+                                  reference        = 1L,
+                                  labels           = NULL) {
 
   if (!is.numeric(n_levels) || length(n_levels) != 1L || is.na(n_levels) ||
       n_levels != round(n_levels) || n_levels < 1) {
@@ -184,14 +233,21 @@ contact_risk_gradient <- function(n_levels  = 5,
     fractions <- rep(1 / n_levels, n_levels)
   }
 
-  relative_risk <- if (n_levels == 1L) {
-    1
+  relative_risk <- if (n_levels == 1L) 1 else exp(seq(0, log(ratio), length.out = n_levels))
+
+  if (!is.numeric(trace_prob_range) || !length(trace_prob_range) %in% c(1L, 2L)) {
+    stop("`trace_prob_range` must be a single probability or a length-2 vector c(lowest, highest).",
+         call. = FALSE)
+  }
+  trace_prob <- if (length(trace_prob_range) == 1L || n_levels == 1L) {
+    rep(trace_prob_range[1], n_levels)
   } else {
-    exp(seq(0, log(ratio), length.out = n_levels))
+    seq(trace_prob_range[1], trace_prob_range[2], length.out = n_levels)
   }
 
   make_contact_risk(fractions     = fractions,
                     relative_risk = relative_risk,
+                    trace_prob    = trace_prob,
                     reference     = reference,
                     labels        = labels)
 }
@@ -217,308 +273,9 @@ as_contact_risk <- function(x, default = NULL, param_name = "contact_risk") {
                param_name), call. = FALSE)
 }
 
-#' Expected secondary infections implied by a contact structure
-#'
-#' Forward direction of fiber's contact-first calibration:
-#' \deqn{R_0 = \bar{c} \times p_0 \times \overline{rr}}
-#' where \eqn{\bar{c}} is the mean number of contacts, \eqn{p_0} the baseline
-#' per-contact transmission probability (for the reference tier) and
-#' \eqn{\overline{rr}} the fraction-weighted mean relative risk.
-#'
-#' The contact distribution's overdispersion does not appear: thinning a
-#' Negative Binomial leaves its mean unchanged, so superspreading can be dialled
-#' in the contact distribution without disturbing this calibration.
-#'
-#' This is the expected offspring count for one transmission route, \emph{before}
-#' any of the intervention layers (PPE, hospital quarantine, safe burial) thin it.
-#'
-#' @param mn_contacts Positive numeric or function(t). Mean of the Negative
-#'   Binomial contact distribution.
-#' @param baseline_risk Numeric in \code{[0, 1]} or function(t). Per-contact
-#'   transmission probability for the reference tier.
-#' @param contact_risk A \code{\link{make_contact_risk}} structure (or a named
-#'   list of its arguments).
-#'
-#' @return A single numeric value, or -- if either input is a function of time --
-#'   a \code{function(t)} returning the implied R0 at each time.
-#'
-#' @examples
-#' contact_r0_from_baseline_risk(mn_contacts = 20, baseline_risk = 0.1)
-#' @export
-contact_r0_from_baseline_risk <- function(mn_contacts,
-                                          baseline_risk,
-                                          contact_risk = make_contact_risk()) {
-  risk <- as_contact_risk(contact_risk)
-
-  if (is.function(mn_contacts) || is.function(baseline_risk)) {
-    return(function(t) {
-      m <- resolve_positive_time_varying(mn_contacts, t, "mn_contacts")
-      p <- resolve_time_varying(baseline_risk, t, "baseline_risk")
-      m * p * risk$mean_relative_risk
-    })
-  }
-
-  m <- resolve_positive_time_varying(mn_contacts, 0, "mn_contacts")
-  p <- resolve_time_varying(baseline_risk, 0, "baseline_risk")
-  m * p * risk$mean_relative_risk
-}
-
-#' Solve the baseline per-contact risk from a target R0
-#'
-#' Inverse of \code{\link{contact_r0_from_baseline_risk}}: given a target
-#' expected number of secondary infections, the mean contact number and the risk
-#' tier structure, return the baseline per-contact transmission probability that
-#' delivers it:
-#' \deqn{p_0 = R_0 / (\bar{c} \times \overline{rr})}
-#'
-#' Every tier's transmission probability must stay in \code{[0, 1]}, so the
-#' highest-risk tier caps the achievable R0 at
-#' \code{mn_contacts * mean_relative_risk / max_relative_risk} (see
-#' \code{\link{max_contact_r0}}). Asking for more than that is an error rather
-#' than a silently clipped top tier.
-#'
-#' @param r0 Non-negative numeric or function(t). Target expected secondary
-#'   infections for this transmission route, before intervention thinning.
-#' @param mn_contacts Positive numeric or function(t). Mean of the Negative
-#'   Binomial contact distribution.
-#' @param contact_risk A \code{\link{make_contact_risk}} structure (or a named
-#'   list of its arguments).
-#' @param param_name Character, used to make error messages point at the
-#'   offending simulation argument.
-#'
-#' @return A single numeric baseline risk in \code{[0, 1]}, or -- if either input
-#'   is a function of time -- a \code{function(t)} returning it at each time.
-#'
-#' @examples
-#' ## 20 contacts on average, want R0 = 2 with a 10-fold risk gradient
-#' risk <- contact_risk_gradient(n_levels = 5, ratio = 10)
-#' baseline_risk_from_contact_r0(r0 = 2, mn_contacts = 20, contact_risk = risk)
-#' @export
-baseline_risk_from_contact_r0 <- function(r0,
-                                          mn_contacts,
-                                          contact_risk = make_contact_risk(),
-                                          param_name   = "r0") {
-  risk <- as_contact_risk(contact_risk)
-
-  solve_one <- function(r0_t, m_t, t_label = NULL) {
-    if (any(!is.finite(r0_t)) || any(r0_t < 0)) {
-      stop(sprintf("`%s` must resolve to finite, non-negative value(s).", param_name),
-           call. = FALSE)
-    }
-    p0 <- r0_t / (m_t * risk$mean_relative_risk)
-    ceiling_r0 <- m_t * risk$mean_relative_risk / risk$max_relative_risk
-    bad <- p0 * risk$max_relative_risk > 1 + 1e-12
-    if (any(bad)) {
-      i <- which(bad)[1]
-      stop(sprintf(
-        paste0("`%s` = %s is not achievable with mean contacts = %s and this risk structure: ",
-               "it needs a baseline risk of %s, which puts the highest-risk tier at %s (must be <= 1). ",
-               "The largest achievable R0 here is %s -- raise the mean contact number, ",
-               "or narrow the relative-risk spread.%s"),
-        param_name,
-        format(round(r0_t[i], 4)),
-        format(round(m_t[i], 4)),
-        format(round(p0[i], 6)),
-        format(round(p0[i] * risk$max_relative_risk, 4)),
-        format(round(ceiling_r0[i], 4)),
-        if (is.null(t_label)) "" else sprintf(" (first failure at t = %s)", format(round(t_label[i], 3)))
-      ), call. = FALSE)
-    }
-    p0
-  }
-
-  if (is.function(r0) || is.function(mn_contacts)) {
-    return(function(t) {
-      r0_t <- resolve_time_varying(r0, t, param_name)
-      m_t  <- resolve_positive_time_varying(mn_contacts, t, "mn_contacts")
-      solve_one(r0_t, m_t, t)
-    })
-  }
-
-  m <- resolve_positive_time_varying(mn_contacts, 0, "mn_contacts")
-  r <- resolve_time_varying(r0, 0, param_name)
-  solve_one(r, m)
-}
-
-#' Largest R0 a contact structure can produce
-#'
-#' The feasibility ceiling implied by \code{\link{baseline_risk_from_contact_r0}}:
-#' the highest-risk tier's transmission probability cannot exceed 1, so
-#' \deqn{R_0^{max} = \bar{c} \times \overline{rr} / \max(rr)}
-#' With a flat risk structure this is just the mean contact number -- you cannot
-#' infect more people than you meet.
-#'
-#' @param mn_contacts Positive numeric. Mean number of contacts.
-#' @param contact_risk A \code{\link{make_contact_risk}} structure (or a named
-#'   list of its arguments).
-#'
-#' @return A single numeric value.
-#' @export
-max_contact_r0 <- function(mn_contacts, contact_risk = make_contact_risk()) {
-  risk <- as_contact_risk(contact_risk)
-  m <- resolve_positive_time_varying(mn_contacts, 0, "mn_contacts")
-  m * risk$mean_relative_risk / risk$max_relative_risk
-}
-
-#' Rough overall R0 for an index case, including the funeral route
-#'
-#' A back-of-envelope assembly of the per-route expectations into a single
-#' number for an index general-population case: the direct (community and
-#' hospital) route, plus the funeral route weighted by the chance the case dies
-#' and receives an unsafe burial.
-#'
-#' \strong{This is a parameter-set sanity check, not an estimate of the simulated
-#' R.} It is deliberately "rough":
-#' \itemize{
-#'   \item It is \emph{unmitigated} -- computed before PPE, hospital quarantine
-#'         and safe-burial thinning, all of which reduce the realised R.
-#'   \item It treats the probability of dying crudely as
-#'         \code{prob_symptomatic * prob_death_comm}, whereas the simulation
-#'         resolves death jointly with whether the case reaches hospital in time.
-#'   \item It ignores the healthcare-worker parent route, which applies only to
-#'         cases who are themselves HCWs.
-#' }
-#' Use \code{\link{compute_reproduction_number}} on a simulated tree for the
-#' realised reproduction number.
-#'
-#' @param mn_contacts_genPop,baseline_risk_genPop Contact mean and baseline risk
-#'   for the general-population transmission route.
-#' @param mn_contacts_funeral,baseline_risk_funeral Contact mean and baseline
-#'   risk for the funeral route. Both \code{NULL} drops the funeral term.
-#' @param contact_risk Risk structure shared by both routes unless overridden.
-#' @param contact_risk_genPop,contact_risk_funeral Optional per-route risk
-#'   structures; \code{NULL} inherits \code{contact_risk}.
-#' @param prob_symptomatic,prob_death_comm Probabilities used for the crude
-#'   death weighting of the funeral term.
-#' @param p_unsafe_funeral Numeric in \code{[0, 1]} or function(t). Probability a
-#'   death leads to an unsafe funeral.
-#' @param t Numeric time at which to evaluate any time-varying inputs. Defaults
-#'   to 0.
-#'
-#' @return A list with the \code{direct} and \code{funeral} contributions, their
-#'   \code{total}, and the inputs used (\code{p_death}, \code{p_unsafe_funeral},
-#'   \code{t}).
-#' @export
-compute_rough_r0 <- function(mn_contacts_genPop,
-                             baseline_risk_genPop,
-                             mn_contacts_funeral  = NULL,
-                             baseline_risk_funeral = NULL,
-                             contact_risk          = make_contact_risk(),
-                             contact_risk_genPop   = NULL,
-                             contact_risk_funeral  = NULL,
-                             prob_symptomatic      = 1,
-                             prob_death_comm       = 0,
-                             p_unsafe_funeral      = 0,
-                             t                     = 0) {
-
-  base_risk    <- as_contact_risk(contact_risk)
-  risk_genPop  <- as_contact_risk(contact_risk_genPop,  base_risk, "contact_risk_genPop")
-  risk_funeral <- as_contact_risk(contact_risk_funeral, base_risk, "contact_risk_funeral")
-
-  at <- function(param, name, positive = FALSE) {
-    if (positive) resolve_positive_time_varying(param, t, name)
-    else          resolve_time_varying(param, t, name)
-  }
-
-  direct <- at(mn_contacts_genPop, "mn_contacts_genPop", positive = TRUE) *
-            at(baseline_risk_genPop, "baseline_risk_genPop") *
-            risk_genPop$mean_relative_risk
-
-  p_death <- at(prob_symptomatic, "prob_symptomatic") * at(prob_death_comm, "prob_death_comm")
-  p_unsafe <- at(p_unsafe_funeral, "p_unsafe_funeral")
-
-  funeral <- if (is.null(mn_contacts_funeral) || is.null(baseline_risk_funeral)) {
-    0
-  } else {
-    p_death * p_unsafe *
-      at(mn_contacts_funeral, "mn_contacts_funeral", positive = TRUE) *
-      at(baseline_risk_funeral, "baseline_risk_funeral") *
-      risk_funeral$mean_relative_risk
-  }
-
-  list(
-    direct           = direct,
-    funeral          = funeral,
-    total            = direct + funeral,
-    p_death          = p_death,
-    p_unsafe_funeral = p_unsafe,
-    t                = t
-  )
-}
-
 ## ---------------------------------------------------------------------------
 ## Runtime pieces used by the offspring functions
 ## ---------------------------------------------------------------------------
-
-## Decide whether an offspring function runs in contact mode or legacy offspring
-## mode, and validate the parameters that mode needs. Exactly one of the two
-## means must be supplied. `suffix` names the route ("genPop", "hcw",
-## "funeral") so error messages point at the actual argument.
-resolve_transmission_mode <- function(mn_offspring,
-                                      overdisp_offspring,
-                                      mn_contacts,
-                                      overdisp_contacts,
-                                      baseline_risk,
-                                      contact_risk,
-                                      suffix) {
-
-  nm <- function(stem) paste0(stem, "_", suffix)
-
-  positive_or_time_varying <- function(param, param_name) {
-    if (is.function(param)) return(invisible(NULL))
-    if (!is.numeric(param) || length(param) != 1L || is.na(param) || param <= 0) {
-      stop(sprintf("`%s` must be a function(t) or a single positive numeric value.", param_name),
-           call. = FALSE)
-    }
-    invisible(NULL)
-  }
-
-  positive_scalar <- function(param, param_name) {
-    if (is.null(param) || !is.numeric(param) || length(param) != 1L ||
-        is.na(param) || param <= 0) {
-      stop(sprintf("`%s` must be a single positive numeric value.", param_name), call. = FALSE)
-    }
-    invisible(NULL)
-  }
-
-  has_offspring <- !is.null(mn_offspring)
-  has_contacts  <- !is.null(mn_contacts)
-
-  if (has_offspring && has_contacts) {
-    stop(sprintf("Supply either `%s` (offspring mode) or `%s` (contact mode), not both.",
-                 nm("mn_offspring"), nm("mn_contacts")), call. = FALSE)
-  }
-  if (!has_offspring && !has_contacts) {
-    stop(sprintf("Supply one of `%s` (offspring mode) or `%s` (contact mode).",
-                 nm("mn_offspring"), nm("mn_contacts")), call. = FALSE)
-  }
-
-  if (has_contacts) {
-    positive_or_time_varying(mn_contacts, nm("mn_contacts"))
-    positive_scalar(overdisp_contacts, nm("overdisp_contacts"))
-    if (is.null(baseline_risk)) {
-      stop(sprintf("`%s` is required in contact mode (solve it from a target R0 with baseline_risk_from_contact_r0()).",
-                   nm("baseline_risk")), call. = FALSE)
-    }
-    if (!is.function(baseline_risk) &&
-        (!is.numeric(baseline_risk) || length(baseline_risk) != 1L ||
-         is.na(baseline_risk) || baseline_risk < 0 || baseline_risk > 1)) {
-      stop(sprintf("`%s` must be a function(t) or a single numeric in [0, 1].", nm("baseline_risk")),
-           call. = FALSE)
-    }
-    return(list(
-      mode          = "contact",
-      mn            = mn_contacts,
-      size          = overdisp_contacts,
-      baseline_risk = baseline_risk,
-      risk          = as_contact_risk(contact_risk, NULL, nm("contact_risk"))
-    ))
-  }
-
-  positive_or_time_varying(mn_offspring, nm("mn_offspring"))
-  positive_scalar(overdisp_offspring, nm("overdisp_offspring"))
-  list(mode = "offspring", mn = mn_offspring, size = overdisp_offspring)
-}
 
 ## Assign a risk tier to each of `n` contacts, drawn independently from the
 ## structure's tier fractions. Consumes exactly one RNG call.
@@ -558,22 +315,40 @@ contact_transmission_prob <- function(levels,
   pmin(p, 1)
 }
 
+## Per-contact tracing probability = trace_coverage(t) * trace_prob[tier],
+## capped at 1. Coverage is the time-varying programme lever (how much tracing
+## capacity exists); trace_prob is the fixed per-tier traceability (how findable
+## that kind of contact is). Resolved at each contact's own calendar time.
+contact_trace_prob <- function(levels,
+                               contact_times_absolute,
+                               trace_coverage,
+                               contact_risk,
+                               param_name = "trace_coverage") {
+  if (length(levels) == 0L) return(numeric(0))
+  cov_t <- resolve_time_varying(trace_coverage, contact_times_absolute, param_name)
+  if (any(cov_t < 0 | cov_t > 1)) {
+    stop(sprintf("`%s` must resolve to value(s) in [0, 1].", param_name), call. = FALSE)
+  }
+  pmin(cov_t * contact_risk$trace_prob[levels], 1)
+}
+
 ## Empty (0-row) contact log, matching the columns built by new_contact_log().
 empty_contact_log <- function() {
   data.frame(
-    parent                  = integer(0),
-    case_id                 = integer(0),
-    record_type             = character(0),
-    class                   = character(0),
-    infection_location      = character(0),
-    time_contact_relative   = numeric(0),
-    time_contact_absolute   = numeric(0),
-    risk_level              = integer(0),
-    risk_category           = character(0),
-    relative_risk           = numeric(0),
-    transmission_prob       = numeric(0),
-    blocked_by              = character(0),
-    stringsAsFactors        = FALSE
+    parent                = integer(0),
+    case_id               = integer(0),
+    record_type           = character(0),
+    class                 = character(0),
+    infection_location    = character(0),
+    time_contact_relative = numeric(0),
+    time_contact_absolute = numeric(0),
+    contact_risk_level    = integer(0),
+    contact_risk_category = character(0),
+    relative_risk         = numeric(0),
+    transmission_prob     = numeric(0),
+    traced                = logical(0),
+    blocked_by            = character(0),
+    stringsAsFactors      = FALSE
   )
 }
 
@@ -596,6 +371,7 @@ new_contact_log <- function(parent_id,
                             time_contact_absolute,
                             risk_levels,
                             transmission_prob,
+                            traced,
                             contact_risk,
                             transmitted,
                             kept,
@@ -606,9 +382,9 @@ new_contact_log <- function(parent_id,
   if (n == 0L) return(empty_contact_log())
 
   blocked_by <- rep(NA_character_, n)
-  blocked_by[!transmitted]           <- "no_transmission"
-  blocked_by[transmitted & !kept]    <- intervention_label
-  blocked_by[kept & !realised]       <- "obv_pep"
+  blocked_by[!transmitted]        <- "no_transmission"
+  blocked_by[transmitted & !kept] <- intervention_label
+  blocked_by[kept & !realised]    <- "obv_pep"
 
   data.frame(
     parent                = rep(parent_id, n),
@@ -618,10 +394,11 @@ new_contact_log <- function(parent_id,
     infection_location    = infection_location,
     time_contact_relative = time_contact_relative,
     time_contact_absolute = time_contact_absolute,
-    risk_level            = as.integer(risk_levels),
-    risk_category         = contact_risk$labels[risk_levels],
+    contact_risk_level    = as.integer(risk_levels),
+    contact_risk_category = contact_risk$labels[risk_levels],
     relative_risk         = contact_risk$relative_risk[risk_levels],
     transmission_prob     = transmission_prob,
+    traced                = traced,
     blocked_by            = blocked_by,
     stringsAsFactors      = FALSE
   )

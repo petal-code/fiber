@@ -23,27 +23,61 @@
 #' delay factors, IPC / ETU coverage, and mean-offspring transmissibility) can
 #' be passed as scalars or functions of time produced by [make_time_varying()].
 #'
-#' @param mn_offspring_genPop Positive numeric or function(t). Mean of the Negative Binomial
-#'   offspring distribution for general-population (genPop) parents; resolved at the parent's
+#' @param mn_contacts_genPop Positive numeric or function(t). Mean of the Negative Binomial
+#'   *contact* distribution for general-population (genPop) parents; resolved at the parent's
 #'   infection time. Scalar or a function of absolute calendar time (e.g. [make_time_varying()]).
-#' @param overdisp_offspring_genPop Positive numeric. Negative Binomial size (overdispersion) for
-#'   genPop parents.
+#' @param overdisp_contacts_genPop Positive numeric. Negative Binomial size (overdispersion) of the
+#'   genPop contact distribution. Does not affect the implied R0, so it dials superspreading
+#'   independently of the calibration.
+#' @param baseline_risk_genPop Numeric in `[0, 1]` or function(t). Per-contact transmission
+#'   probability for the *reference* risk tier on the genPop route; other tiers scale it by their
+#'   relative risk. Supply this or `r0_target`, not both.
 #' @param Tg_shape_genPop Positive numeric. Shape of the Gamma generation-time distribution for
 #'   genPop parents.
 #' @param Tg_rate_genPop Positive numeric. Rate of the Gamma generation-time distribution for genPop
 #'   parents (mean generation time = shape / rate).
-#' @param mn_offspring_hcw Positive numeric or function(t). Mean Negative Binomial offspring
+#' @param mn_contacts_hcw Positive numeric or function(t). Mean Negative Binomial contact
 #'   distribution for healthcare-worker (HCW) parents; resolved at the parent's infection time.
-#' @param overdisp_offspring_hcw Positive numeric. Negative Binomial size (overdispersion) for HCW
-#'   parents.
+#' @param overdisp_contacts_hcw Positive numeric. Negative Binomial size (overdispersion) of the HCW
+#'   contact distribution.
+#' @param baseline_risk_hcw Numeric in `[0, 1]` or function(t). Per-contact transmission probability
+#'   for the reference risk tier on the HCW route. When `r0_target` is used this defaults to the
+#'   solved genPop baseline risk.
 #' @param Tg_shape_hcw Positive numeric. Shape of the Gamma generation-time distribution for HCW
 #'   parents.
 #' @param Tg_rate_hcw Positive numeric. Rate of the Gamma generation-time distribution for HCW
 #'   parents.
-#' @param mn_offspring_funeral Positive numeric or function(t). Mean Negative Binomial number of
-#'   offspring at an unsafe funeral; resolved at the parent's death (outcome) time.
-#' @param overdisp_offspring_funeral Positive numeric. Negative Binomial size (overdispersion) for
-#'   funeral offspring.
+#' @param mn_contacts_funeral Positive numeric or function(t). Mean Negative Binomial number of
+#'   contacts at a funeral; resolved at the parent's death (outcome) time.
+#' @param overdisp_contacts_funeral Positive numeric. Negative Binomial size (overdispersion) of the
+#'   funeral contact distribution.
+#' @param baseline_risk_funeral Numeric in `[0, 1]` or function(t). Per-contact transmission
+#'   probability for the reference risk tier at a funeral. Supply this or `r0_target`, not both.
+#' @param contact_risk A [make_contact_risk()] structure (or a named list of its arguments) giving
+#'   the risk tier fractions, relative risks and per-tier contact-tracing probabilities. Used by
+#'   every route unless that route overrides it. Defaults to five flat tiers with no tracing.
+#' @param contact_risk_genPop,contact_risk_hcw,contact_risk_funeral Optional per-route risk
+#'   structures. `NULL` (the default) inherits `contact_risk`. Typically genPop and HCW share the
+#'   inherited structure while funerals get their own.
+#' @param r0_target Optional positive numeric. If supplied, the genPop and funeral baseline risks
+#'   are solved from this target R0 via [solve_baseline_risk_for_r0()] instead of being given
+#'   directly, using `r0_prop_funeral` to split transmission between the two routes. The solved
+#'   values are returned in `sim_info`.
+#' @param r0_prop_funeral Numeric in `[0, 1]`. Share of `r0_target` attributed to the funeral route.
+#'   Only used when `r0_target` is supplied. Defaults to 0.
+#' @param r0_solve_n,r0_solve_seed Monte-Carlo settings for the R0 inversion.
+#' @param trace_coverage Numeric in `[0, 1]` or function(t). Programme-level contact tracing
+#'   coverage, multiplying each risk tier's `trace_prob`. Defaults to 0 (no tracing).
+#' @param prob_isolate_given_traced Numeric in `[0, 1]` or function(t). Probability a traced,
+#'   symptomatic case enters isolation. Defaults to 0.
+#' @param onset_to_isolation Function(n) or NULL. Delay from symptom onset to entering isolation.
+#'   NULL (default) means isolation begins at symptom onset.
+#' @param isolation_efficacy Numeric in `[0, 1]`. Reduction in an isolated case's pre-admission
+#'   transmission. Defaults to 0.
+#' @param prob_hospitalised_multiplier_traced Positive numeric or function(t). Multiplier on
+#'   P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect).
+#' @param hospitalisation_delay_factor_traced Positive numeric or function(t). Extra multiplier on
+#'   the onset-to-admission delay for traced cases. Defaults to 1 (no effect).
 #' @param Tg_shape_funeral Positive numeric. Shape of the Gamma outcome-to-funeral-infection delay
 #'   distribution.
 #' @param Tg_rate_funeral Positive numeric. Rate of the Gamma funeral-delay distribution (mean delay
@@ -155,7 +189,22 @@
 #'   \describe{
 #'     \item{`tdf`}{The simulated transmission tree: one row per realised
 #'       infection, ordered by absolute infection time. Carries attributes
-#'       `hcw_total`, `hcw_infected`, `hcw_remaining`, and `obv_pep_num_treated`.}
+#'       `hcw_total`, `hcw_infected`, `hcw_remaining`, and `obv_pep_num_treated`.
+#'       Each case also records the risk tier of the contact that produced it
+#'       (`contact_risk_level`, `contact_risk_category`), whether that contact was
+#'       traced (`traced`), and whether the case entered pre-admission isolation
+#'       (`isolated`, `time_isolation_relative`, `time_isolation_absolute`).}
+#'     \item{`contact_log`}{Every contact generated over the run, one row each --
+#'       including the contacts that never became infections. Columns: `parent`,
+#'       `case_id` (the `tdf` id for contacts that became cases, `NA` otherwise),
+#'       `record_type` (`"contact"` or `"infection"`), `class`,
+#'       `infection_location`, `time_contact_relative`, `time_contact_absolute`,
+#'       `contact_risk_level`, `contact_risk_category`, `relative_risk`,
+#'       `transmission_prob` (the realised per-contact probability), `traced`, and
+#'       `blocked_by` -- `NA` for realised infections, else `"no_transmission"`
+#'       (the contact simply did not transmit), the route's intervention layer, or
+#'       `"obv_pep"`. This is the denominator for anything contact-tracing or
+#'       prophylaxis related.}
 #'     \item{`prevented_completed`}{A data frame of the infections the OBV PEP gate
 #'       prevented -- the averted index infections only, not their averted onward
 #'       chains -- each replayed through the same outcome model as realised cases to
@@ -174,19 +223,48 @@
 #' @export
 branching_process_main <- function(
 
-  ## Transmission
-  mn_offspring_genPop = NULL,               # scalar or function(t): mean offspring distribution for genPop (resolved at parent infection time)
-  overdisp_offspring_genPop = NULL,         # overdispersion of the offspring distribution for genPop
+  ## Transmission: contacts first, then a per-contact risk-tier transmission draw.
+  ## Each route has its own contact distribution, baseline per-contact risk and risk
+  ## structure. Baseline risks can be supplied directly or solved from `r0_target`.
+  mn_contacts_genPop = NULL,                # scalar or function(t): mean CONTACT distribution for genPop (resolved at parent infection time)
+  overdisp_contacts_genPop = NULL,          # overdispersion of the contact distribution for genPop
+  baseline_risk_genPop = NULL,              # scalar or function(t): per-contact transmission prob for the reference risk tier
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
-  mn_offspring_hcw = NULL,                  # scalar or function(t): mean offspring distribution for HCWs (resolved at parent infection time)
-  overdisp_offspring_hcw = NULL,            # overdispersion of the offspring distribution for HCWs
+  mn_contacts_hcw = NULL,                   # scalar or function(t): mean CONTACT distribution for HCWs (resolved at parent infection time)
+  overdisp_contacts_hcw = NULL,             # overdispersion of the contact distribution for HCWs
+  baseline_risk_hcw = NULL,                 # scalar or function(t): per-contact transmission prob for the reference risk tier
   Tg_shape_hcw = NULL,                      # gamma shape parameter for Tg distribution for HCWs
   Tg_rate_hcw = NULL,                       # gamma rate parameter for Tg distribution for HCWs
-  mn_offspring_funeral = NULL,              # scalar or function(t): mean offspring at unsafe funeral (resolved at parent death time)
-  overdisp_offspring_funeral = NULL,        # overdispersion of the above number of offspring
+  mn_contacts_funeral = NULL,               # scalar or function(t): mean CONTACT distribution at a funeral (resolved at parent death time)
+  overdisp_contacts_funeral = NULL,         # overdispersion of the funeral contact distribution
+  baseline_risk_funeral = NULL,             # scalar or function(t): per-contact transmission prob for the reference risk tier
   Tg_shape_funeral = NULL,                  # gamma shape parameter for Tg distribution at funerals ### have high shape, high rate to get low variance ##
   Tg_rate_funeral = NULL,                   # gamma rate parameter for Tg distribution at funerals
+
+  ## Contact risk structure: tier fractions, relative risks and per-tier trace probabilities.
+  ## Per-route arguments default to the shared `contact_risk`, so genPop and HCW can share one
+  ## structure while funerals use a different one.
+  contact_risk = NULL,                      # fiber_contact_risk structure shared across routes (default: 5 flat tiers, no tracing)
+  contact_risk_genPop = NULL,               # NULL = inherit contact_risk
+  contact_risk_hcw = NULL,                  # NULL = inherit contact_risk
+  contact_risk_funeral = NULL,              # NULL = inherit contact_risk
+
+  ## Optional R0-anchored calibration: solve the genPop and funeral baseline risks from a
+  ## target R0 rather than supplying them directly. See solve_baseline_risk_for_r0().
+  r0_target = NULL,                         # positive scalar: target R0 at t = 0
+  r0_prop_funeral = 0,                      # share of r0_target coming from the funeral route
+  r0_solve_n = 50000,                       # Monte-Carlo draws for the R0 inversion
+  r0_solve_seed = NULL,                     # optional seed for the R0 inversion
+
+  ## Contact tracing and pre-admission isolation. Tracing probability is tier-specific (it
+  ## lives in the contact risk structure), so the risk tiers drive these NPIs.
+  trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
+  prob_isolate_given_traced = 0,            # scalar/function(t): P(isolates | traced and symptomatic)
+  onset_to_isolation = NULL,                # function(n): delay from symptom onset to isolation (NULL = isolate at onset)
+  isolation_efficacy = 0,                   # scalar: reduction in pre-admission transmission while isolated
+  prob_hospitalised_multiplier_traced = 1,  # scalar/function(t): multiplier on P(hospitalised | symptomatic) for traced cases
+  hospitalisation_delay_factor_traced = 1,  # scalar/function(t): extra multiplier on admission delay for traced cases
 
   ## Natural history
   incubation_period,              # DESCRIPTION HERE
@@ -319,6 +397,86 @@ branching_process_main <- function(
   validate_scalar_probability(etu_efficacy, "etu_efficacy")
   validate_scalar_probability(general_hospital_quarantine_efficacy,
                               "general_hospital_quarantine_efficacy")
+  validate_scalar_probability(isolation_efficacy, "isolation_efficacy")
+
+  ##################################################################
+  ### Step 1a: Resolve the contact risk structures and, optionally,
+  ### solve the baseline per-contact risks from a target R0.
+  ###
+  ### Each route gets its own structure, falling back to the shared
+  ### `contact_risk` when not overridden -- so genPop and HCW can share one
+  ### structure while funerals use a steeper one.
+  ##################################################################
+  contact_risk_shared  <- as_contact_risk(contact_risk, NULL, "contact_risk")
+  risk_genPop  <- as_contact_risk(contact_risk_genPop,  contact_risk_shared, "contact_risk_genPop")
+  risk_hcw     <- as_contact_risk(contact_risk_hcw,     contact_risk_shared, "contact_risk_hcw")
+  risk_funeral <- as_contact_risk(contact_risk_funeral, contact_risk_shared, "contact_risk_funeral")
+
+  r0_solution <- NULL
+  if (!is.null(r0_target)) {
+    if (!is.null(baseline_risk_genPop) || !is.null(baseline_risk_funeral)) {
+      stop("Supply either `r0_target` (to solve the baseline risks) or the `baseline_risk_*` arguments directly, not both.",
+           call. = FALSE)
+    }
+    ## The inversion needs the same inputs the simulation uses, so hand it the
+    ## already-resolved structures alongside the natural-history parameters.
+    r0_args <- list(
+      mn_contacts_genPop           = mn_contacts_genPop,
+      mn_contacts_funeral          = mn_contacts_funeral,
+      contact_risk_genPop          = risk_genPop,
+      contact_risk_funeral         = risk_funeral,
+      Tg_shape_genPop              = Tg_shape_genPop,
+      Tg_rate_genPop               = Tg_rate_genPop,
+      incubation_period            = incubation_period,
+      onset_to_hospitalisation     = onset_to_hospitalisation,
+      hospitalisation_delay_factor = hospitalisation_delay_factor,
+      onset_to_death               = onset_to_death,
+      onset_to_recovery            = onset_to_recovery,
+      hospitalisation_to_death     = hospitalisation_to_death,
+      hospitalisation_to_recovery  = hospitalisation_to_recovery,
+      prob_symptomatic             = prob_symptomatic,
+      prob_hospitalised_genPop     = prob_hospitalised_genPop,
+      prob_death_comm              = prob_death_comm,
+      prob_death_hosp              = prob_death_hosp,
+      prop_etu                     = prop_etu,
+      etu_efficacy                 = etu_efficacy,
+      general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
+      isolation_efficacy           = isolation_efficacy,
+      safe_funeral_efficacy        = safe_funeral_efficacy,
+      p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
+      p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+      trace_coverage               = trace_coverage,
+      prob_isolate_given_traced    = prob_isolate_given_traced,
+      onset_to_isolation           = onset_to_isolation,
+      prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
+      hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced
+    )
+    r0_solution <- solve_baseline_risk_for_r0(
+      R0   = r0_target,
+      args = r0_args,
+      proportion_transmission_from_funerals = r0_prop_funeral,
+      n    = r0_solve_n,
+      seed = r0_solve_seed
+    )
+    baseline_risk_genPop  <- r0_solution$baseline_risk_genPop_required
+    baseline_risk_funeral <- r0_solution$baseline_risk_funeral_required
+  }
+
+  ## HCW parents share the genPop per-contact risk unless given their own. Per-contact
+  ## transmission risk is a property of the exposure rather than the infector's
+  ## occupation, and the single-type R0 inversion has no separate HCW term to solve
+  ## against. The HCW contact distribution stays explicit: how many contacts a
+  ## healthcare worker has is genuinely a different question.
+  if (is.null(baseline_risk_hcw)) baseline_risk_hcw <- baseline_risk_genPop
+
+  for (nm in c("mn_contacts_genPop", "mn_contacts_hcw", "mn_contacts_funeral",
+               "overdisp_contacts_genPop", "overdisp_contacts_hcw", "overdisp_contacts_funeral",
+               "baseline_risk_genPop", "baseline_risk_hcw", "baseline_risk_funeral")) {
+    if (is.null(get(nm, inherits = FALSE))) {
+      stop(sprintf("`%s` is required. Supply the baseline risks directly, or set `r0_target` to solve them.", nm),
+           call. = FALSE)
+    }
+  }
 
   if (!is.logical(obv_pep_enabled) || length(obv_pep_enabled) != 1L || is.na(obv_pep_enabled)) {
     stop("`obv_pep_enabled` must be a single logical value.", call. = FALSE)
@@ -343,6 +501,9 @@ branching_process_main <- function(
   ## loop, to populate obv_num_treated$prevented_deaths without perturbing the
   ## simulated trajectory's RNG stream.
   obv_prevented_info_list <- list()
+  ## Per-parent contact logs (every contact generated, whether or not it transmitted).
+  ## Concatenated once after the loop into the returned `contact_log`.
+  contact_log_list <- list()
   ##################################################################
   ### Step 1b: Upfront sanity checks on time-varying parameters
   ###
@@ -367,7 +528,12 @@ branching_process_main <- function(
     ppe_coverage_hcw              = ppe_coverage_hcw,
     prop_etu                      = prop_etu,
     obv_pep_coverage          = obv_pep_coverage,
-    obv_pep_adherence             = obv_pep_adherence
+    obv_pep_adherence             = obv_pep_adherence,
+    trace_coverage                = trace_coverage,
+    prob_isolate_given_traced     = prob_isolate_given_traced,
+    baseline_risk_genPop          = baseline_risk_genPop,
+    baseline_risk_hcw             = baseline_risk_hcw,
+    baseline_risk_funeral         = baseline_risk_funeral
   )
   ## Build the sampling grid from ALL time-varying inputs -- the probabilities
   ## above plus the positive-valued curves below -- so the upfront check lands on
@@ -378,9 +544,11 @@ branching_process_main <- function(
     list(
       hospitalisation_delay_factor = hospitalisation_delay_factor,
       obv_pep_dpc                  = obv_pep_dpc,
-      mn_offspring_genPop          = mn_offspring_genPop,
-      mn_offspring_hcw             = mn_offspring_hcw,
-      mn_offspring_funeral         = mn_offspring_funeral
+      mn_contacts_genPop           = mn_contacts_genPop,
+      mn_contacts_hcw              = mn_contacts_hcw,
+      mn_contacts_funeral          = mn_contacts_funeral,
+      prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
+      hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced
     )
   )
   sanity_grid <- build_sanity_grid(grid_inputs)
@@ -393,13 +561,44 @@ branching_process_main <- function(
   check_positive_on_grid(hospitalisation_delay_factor, sanity_grid,
                          "hospitalisation_delay_factor")
 
-  ## mn_offspring_* are strictly positive NB means and may be scalars or functions
+  ## mn_contacts_* are strictly positive NB means and may be scalars or functions
   ## of absolute calendar time. They are resolved inside the offspring functions
   ## (genPop/HCW at the parent's infection time, funeral at the parent's death
   ## time); here we only sanity-check positivity across the simulation horizon.
-  check_positive_on_grid(mn_offspring_genPop,  sanity_grid, "mn_offspring_genPop")
-  check_positive_on_grid(mn_offspring_hcw,     sanity_grid, "mn_offspring_hcw")
-  check_positive_on_grid(mn_offspring_funeral, sanity_grid, "mn_offspring_funeral")
+  check_positive_on_grid(mn_contacts_genPop,  sanity_grid, "mn_contacts_genPop")
+  check_positive_on_grid(mn_contacts_hcw,     sanity_grid, "mn_contacts_hcw")
+  check_positive_on_grid(mn_contacts_funeral, sanity_grid, "mn_contacts_funeral")
+
+  ## Traced-case multipliers are strictly positive (they scale a probability and a delay).
+  check_positive_on_grid(prob_hospitalised_multiplier_traced, sanity_grid,
+                         "prob_hospitalised_multiplier_traced")
+  check_positive_on_grid(hospitalisation_delay_factor_traced, sanity_grid,
+                         "hospitalisation_delay_factor_traced")
+
+  ## The highest-risk tier's per-contact transmission probability is
+  ## baseline_risk(t) * max_relative_risk and must stay a valid probability across the
+  ## whole horizon. Catch an infeasible combination here rather than mid-run.
+  check_top_tier_probability <- function(baseline_risk, risk, param_name) {
+    values <- resolve_time_varying(baseline_risk, sanity_grid, param_name)
+    top <- values * risk$max_relative_risk
+    if (any(top > 1 + 1e-12)) {
+      bad <- which(top > 1 + 1e-12)
+      i <- bad[1]
+      stop(sprintf(
+        "`%s` = %s at t = %s gives the highest-risk tier a transmission probability of %s (must be <= 1). Lower the baseline risk, raise the mean contact number, or narrow the relative-risk spread.",
+        param_name, format(round(values[i], 6)), format(round(sanity_grid[i], 3)),
+        format(round(top[i], 4))
+      ), call. = FALSE)
+    }
+    invisible(NULL)
+  }
+  check_top_tier_probability(baseline_risk_genPop,  risk_genPop,  "baseline_risk_genPop")
+  check_top_tier_probability(baseline_risk_hcw,     risk_hcw,     "baseline_risk_hcw")
+  check_top_tier_probability(baseline_risk_funeral, risk_funeral, "baseline_risk_funeral")
+
+  if (!is.null(onset_to_isolation) && !is.function(onset_to_isolation)) {
+    stop("`onset_to_isolation` must be NULL or a function(n) returning n delay draws.", call. = FALSE)
+  }
 
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
   check_nonneg_on_grid(obv_pep_dpc, sanity_grid, "obv_pep_dpc")
@@ -475,6 +674,12 @@ branching_process_main <- function(
     time_outcome_relative          = NA_real_,
     time_outcome_absolute          = NA_real_,
     funeral_safety                 = NA_character_,
+    contact_risk_level             = NA_integer_,          # risk tier of the contact that produced this case
+    contact_risk_category          = NA_character_,        # its label
+    traced                         = rep(FALSE, max_cases),# was that contact reached by contact tracing?
+    isolated                       = rep(FALSE, max_cases),# did this case enter pre-admission isolation?
+    time_isolation_relative        = NA_real_,
+    time_isolation_absolute        = NA_real_,
     obv_pep_eligible               = rep(FALSE, max_cases),
     obv_pep_received               = rep(FALSE, max_cases),
     obv_pep_adherent               = rep(FALSE, max_cases),
@@ -539,6 +744,14 @@ branching_process_main <- function(
     time_outcome_relative          = seeding_cases_outcome_time,
     time_outcome_absolute          = seeding_cases_outcome_time_absolute,
     funeral_safety                 = seeding_cases_funeral_safety,
+    ## Seed cases were not produced by a contact, so they carry no risk tier and are
+    ## never traced (there is no index case to trace them from).
+    contact_risk_level             = NA_integer_,
+    contact_risk_category          = NA_character_,
+    traced                         = rep(FALSE, seeding_cases),
+    isolated                       = rep(FALSE, seeding_cases),
+    time_isolation_relative        = NA_real_,
+    time_isolation_absolute        = NA_real_,
     obv_pep_eligible               = rep(FALSE, seeding_cases),
     obv_pep_received               = rep(FALSE, seeding_cases),
     obv_pep_adherent               = rep(FALSE, seeding_cases),
@@ -577,6 +790,12 @@ branching_process_main <- function(
   v_time_outcome_relative         <- tdf$time_outcome_relative
   v_time_outcome_absolute         <- tdf$time_outcome_absolute
   v_funeral_safety                <- tdf$funeral_safety
+  v_contact_risk_level            <- tdf$contact_risk_level
+  v_contact_risk_category         <- tdf$contact_risk_category
+  v_traced                        <- tdf$traced
+  v_isolated                      <- tdf$isolated
+  v_time_isolation_relative       <- tdf$time_isolation_relative
+  v_time_isolation_absolute       <- tdf$time_isolation_absolute
   v_obv_pep_eligible              <- tdf$obv_pep_eligible
   v_obv_pep_received              <- tdf$obv_pep_received
   v_obv_pep_adherent              <- tdf$obv_pep_adherent
@@ -629,6 +848,12 @@ branching_process_main <- function(
       time_outcome_relative         = v_time_outcome_relative[idx],
       time_outcome_absolute         = v_time_outcome_absolute[idx],
       funeral_safety                = v_funeral_safety[idx],
+      contact_risk_level            = v_contact_risk_level[idx],
+      contact_risk_category         = v_contact_risk_category[idx],
+      traced                        = v_traced[idx],
+      isolated                      = v_isolated[idx],
+      time_isolation_relative       = v_time_isolation_relative[idx],
+      time_isolation_absolute       = v_time_isolation_absolute[idx],
       obv_pep_eligible              = v_obv_pep_eligible[idx],
       obv_pep_received              = v_obv_pep_received[idx],
       obv_pep_adherent              = v_obv_pep_adherent[idx],
@@ -654,10 +879,14 @@ branching_process_main <- function(
 
     if (parent_info$class == "genPop") {
       offspring_community_healthcare_df <- offspring_function_genPop(parent_info = parent_info,
-                                                                     mn_offspring_genPop = mn_offspring_genPop,
-                                                                     overdisp_offspring_genPop = overdisp_offspring_genPop,
+                                                                     mn_contacts_genPop = mn_contacts_genPop,
+                                                                     overdisp_contacts_genPop = overdisp_contacts_genPop,
+                                                                     baseline_risk_genPop = baseline_risk_genPop,
+                                                                     contact_risk_genPop = risk_genPop,
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
+                                                                     trace_coverage = trace_coverage,
+                                                                     isolation_efficacy = isolation_efficacy,
                                                                      prop_etu = prop_etu,
                                                                      etu_efficacy = etu_efficacy,
                                                                      general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
@@ -680,11 +909,15 @@ branching_process_main <- function(
       ## hospital transmission event.
 
       offspring_community_healthcare_df <- offspring_function_hcw(parent_info = parent_info,
-                                                                  mn_offspring_hcw = mn_offspring_hcw,
-                                                                  overdisp_offspring_hcw = overdisp_offspring_hcw,
+                                                                  mn_contacts_hcw = mn_contacts_hcw,
+                                                                  overdisp_contacts_hcw = overdisp_contacts_hcw,
+                                                                  baseline_risk_hcw = baseline_risk_hcw,
+                                                                  contact_risk_hcw = risk_hcw,
                                                                   Tg_shape_hcw = Tg_shape_hcw,
                                                                   Tg_rate_hcw = Tg_rate_hcw,
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
+                                                                  trace_coverage = trace_coverage,
+                                                                  isolation_efficacy = isolation_efficacy,
                                                                   ppe_coverage_hcw = ppe_coverage_hcw,
                                                                   ppe_efficacy = ppe_efficacy,
                                                                   prop_etu = prop_etu,
@@ -725,10 +958,13 @@ branching_process_main <- function(
     ### Step 3: Generate offspring associated with funeral transmission
     #############################################################################################
     offspring_funeral_df <- offspring_function_funeral(parent_info = parent_info,
-                                                       mn_offspring_funeral = mn_offspring_funeral,
-                                                       overdisp_offspring_funeral = overdisp_offspring_funeral,
+                                                       mn_contacts_funeral = mn_contacts_funeral,
+                                                       overdisp_contacts_funeral = overdisp_contacts_funeral,
+                                                       baseline_risk_funeral = baseline_risk_funeral,
+                                                       contact_risk_funeral = risk_funeral,
                                                        Tg_shape_funeral = Tg_shape_funeral,
                                                        Tg_rate_funeral = Tg_rate_funeral,
+                                                       trace_coverage = trace_coverage,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
                                                        obv_pep_enabled = obv_pep_enabled,
                                                        obv_pep_coverage = obv_pep_coverage,
@@ -760,6 +996,14 @@ branching_process_main <- function(
     n_hcw_funeral <- sum(offspring_funeral_df$class == "HCW")
     hcw_available <- hcw_available - n_hcw_funeral
 
+    ## Collect this parent's full contact log across both routes. The rows flagged
+    ## "infection" appear in the same order as the offspring rows, which is what lets
+    ## case ids be filled in once those rows are appended below.
+    combined_contact_log <- rbind(
+      attr(offspring_community_healthcare_df, "contact_log", exact = TRUE),
+      attr(offspring_funeral_df, "contact_log", exact = TRUE)
+    )
+
     #################################################################################################################
     ### Step 4: Complete offspring information based on parent attributes and timings; and update parent information
     ##          (e.g. num_offspring, offspring_generated == TRUE etc)
@@ -779,6 +1023,10 @@ branching_process_main <- function(
                                                        p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
                                                        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
                                                        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
+                                                       prob_isolate_given_traced = prob_isolate_given_traced,
+                                                       onset_to_isolation = onset_to_isolation,
+                                                       prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
+                                                       hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced,
                                                        incubation_period = incubation_period,
                                                        onset_to_hospitalisation = onset_to_hospitalisation,
                                                        hospitalisation_delay_factor = hospitalisation_delay_factor,
@@ -804,6 +1052,17 @@ branching_process_main <- function(
     ## per-iteration max(which(!is.na(...))) / max(id) scans.
     if (n_new > 0) {
       rows <- (n_filled + 1L):(n_filled + n_new)
+      ## Link the contact log's realised infections to the case ids they became. The
+      ## offspring functions emit their infection rows in candidate order and rbind
+      ## preserves it, so the two line up one-for-one; check rather than assume.
+      if (nrow(combined_contact_log) > 0) {
+        inf_rows <- which(combined_contact_log$record_type == "infection")
+        if (length(inf_rows) != n_new) {
+          stop("Internal error: contact log infections do not align with the offspring rows.",
+               call. = FALSE)
+        }
+        combined_contact_log$case_id[inf_rows] <- rows
+      }
       v_id[rows]                            <- rows
       v_class[rows]                         <- complete_offspring_df$class
       v_infection_location[rows]            <- complete_offspring_df$infection_location
@@ -823,6 +1082,12 @@ branching_process_main <- function(
       v_time_outcome_relative[rows]         <- complete_offspring_df$time_outcome_relative
       v_time_outcome_absolute[rows]         <- complete_offspring_df$time_outcome_absolute
       v_funeral_safety[rows]                <- complete_offspring_df$funeral_safety
+      v_contact_risk_level[rows]            <- complete_offspring_df$contact_risk_level
+      v_contact_risk_category[rows]         <- complete_offspring_df$contact_risk_category
+      v_traced[rows]                        <- complete_offspring_df$traced
+      v_isolated[rows]                      <- complete_offspring_df$isolated
+      v_time_isolation_relative[rows]       <- complete_offspring_df$time_isolation_relative
+      v_time_isolation_absolute[rows]       <- complete_offspring_df$time_isolation_absolute
       v_obv_pep_eligible[rows]              <- complete_offspring_df$obv_pep_eligible
       v_obv_pep_received[rows]              <- complete_offspring_df$obv_pep_received
       v_obv_pep_adherent[rows]              <- complete_offspring_df$obv_pep_adherent
@@ -831,6 +1096,10 @@ branching_process_main <- function(
       v_offspring_generated[rows]           <- complete_offspring_df$offspring_generated
       n_filled <- n_filled + n_new
     }
+    if (nrow(combined_contact_log) > 0) {
+      contact_log_list[[length(contact_log_list) + 1L]] <- combined_contact_log
+    }
+
     ## Deplete susceptibles
     susc <- susc - v_n_offspring[idx]
   }
@@ -862,6 +1131,12 @@ branching_process_main <- function(
     time_outcome_relative         = v_time_outcome_relative,
     time_outcome_absolute         = v_time_outcome_absolute,
     funeral_safety                = v_funeral_safety,
+    contact_risk_level            = v_contact_risk_level,
+    contact_risk_category         = v_contact_risk_category,
+    traced                        = v_traced,
+    isolated                      = v_isolated,
+    time_isolation_relative       = v_time_isolation_relative,
+    time_isolation_absolute       = v_time_isolation_absolute,
     obv_pep_eligible              = v_obv_pep_eligible,
     obv_pep_received              = v_obv_pep_received,
     obv_pep_adherent              = v_obv_pep_adherent,
@@ -944,8 +1219,21 @@ branching_process_main <- function(
   attr(tdf, "hcw_remaining") <- hcw_available
   attr(tdf, "obv_pep_num_treated") <- obv_num_treated
 
+  ## Assemble the full contact log: one row per contact generated over the whole run,
+  ## ordered by parent then by the order contacts were drawn. `record_type` says whether
+  ## a contact became an infection, and `case_id` joins those rows to `tdf`.
+  contact_log <- if (length(contact_log_list) > 0) {
+    cl <- do.call(rbind, contact_log_list)
+    rownames(cl) <- NULL
+    cl
+  } else {
+    empty_contact_log()
+  }
+
   out <- list(
     tdf = tdf,
+    ## Full contact log (see the @return docs).
+    contact_log = contact_log,
     ## Counterfactual completed offspring info for the infections OBV prevented
     ## (averted index infections only; NULL when nothing was prevented). See the
     ## deferred-counterfactual block above and the @return docs for column notes.
@@ -956,7 +1244,18 @@ branching_process_main <- function(
       hcw_total           = hcw_total,
       seed                = seed,
       obv_pep_enabled     = obv_pep_enabled,
-      obv_pep_num_treated = obv_num_treated
+      obv_pep_num_treated = obv_num_treated,
+      ## Contact-first calibration: the risk structures actually used, the baseline
+      ## per-contact risks (solved from r0_target when that was supplied), and the
+      ## R0 inversion diagnostics.
+      contact_risk_genPop   = risk_genPop,
+      contact_risk_hcw      = risk_hcw,
+      contact_risk_funeral  = risk_funeral,
+      baseline_risk_genPop  = baseline_risk_genPop,
+      baseline_risk_hcw     = baseline_risk_hcw,
+      baseline_risk_funeral = baseline_risk_funeral,
+      r0_target             = r0_target,
+      r0_solution           = r0_solution
     )
   )
 

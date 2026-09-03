@@ -27,6 +27,15 @@ complete_offspring_info <- function(
     p_unsafe_funeral_comm_genPop = NULL, ## scalar or function(t): probability of unsafe funeral after a community death, genPop
     p_unsafe_funeral_hosp_genPop = NULL, ## scalar or function(t): probability of unsafe funeral after a hospital death, genPop
 
+    ## Contact tracing consequences. `traced` arrives on the offspring dataframe from the
+    ## offspring functions (a contact's tier determines how likely it was to be traced).
+    ## Traced cases may isolate before admission, and may be admitted more often and sooner.
+    ## All three default to no effect.
+    prob_isolate_given_traced = 0,       ## scalar or function(t): P(isolates | traced and symptomatic)
+    onset_to_isolation = NULL,           ## function(n): delay from symptom onset to entering isolation (default 0)
+    prob_hospitalised_multiplier_traced = 1,   ## scalar or function(t): multiplier on P(hospitalised | symptomatic) for traced cases
+    hospitalisation_delay_factor_traced = 1,   ## scalar or function(t): extra multiplier on the admission delay for traced cases
+
     ## Delay distributions
     incubation_period,                   ## between infection occurring and symptoms occurring (in symptomatic individuals)
     onset_to_hospitalisation,            ## between symptom onset and hospitalisation
@@ -86,6 +95,12 @@ complete_offspring_info <- function(
   validate_probability_or_time_varying(p_unsafe_funeral_hosp_hcw, "p_unsafe_funeral_hosp_hcw")
   validate_probability_or_time_varying(p_unsafe_funeral_comm_genPop, "p_unsafe_funeral_comm_genPop")
   validate_probability_or_time_varying(p_unsafe_funeral_hosp_genPop, "p_unsafe_funeral_hosp_genPop")
+  validate_probability_or_time_varying(prob_isolate_given_traced, "prob_isolate_given_traced")
+  validate_positive_or_time_varying(prob_hospitalised_multiplier_traced, "prob_hospitalised_multiplier_traced")
+  validate_positive_or_time_varying(hospitalisation_delay_factor_traced, "hospitalisation_delay_factor_traced")
+  if (!is.null(onset_to_isolation) && !is.function(onset_to_isolation)) {
+    stop("`onset_to_isolation` must be NULL or a function(n) returning n delay draws.", call. = FALSE)
+  }
 
   ## Step 0: Note on parameter interpretation
   ## prob_death_comm, prob_death_hosp, prob_hospitalised_hcw, and
@@ -120,6 +135,43 @@ complete_offspring_info <- function(
   offspring_absolute_symptom_time <- offspring_absolute_infection_time + offspring_incubation_period
 
   ################################################################################################################################
+  ## Step 1b: Contact tracing consequences -- isolation
+  ##  - `traced` is carried on the offspring dataframe by the offspring functions: whether a contact was reached by tracing
+  ##    depends on its risk tier, so this is the channel by which the risk structure drives the NPIs.
+  ##  - Traced, symptomatic cases enter isolation with probability prob_isolate_given_traced, a delay after their symptom
+  ##    onset. Isolation reduces their PRE-ADMISSION transmission (see the offspring functions); post-admission transmission
+  ##    is already handled by hospital quarantine, and the two windows are disjoint.
+  ##  - Asymptomatic cases are not isolated here: isolation is triggered by symptom onset in a monitored contact, not by
+  ##    quarantine-on-tracing. Modelling a quarantine-all-traced-contacts policy would mean triggering on the contact event.
+  ################################################################################################################################
+  offspring_traced <- if (is.null(offspring_dataframe$traced)) {
+    rep(FALSE, num_offspring)
+  } else {
+    as.logical(offspring_dataframe$traced) & !is.na(offspring_dataframe$traced)
+  }
+
+  offspring_isolated <- rep(FALSE, num_offspring)
+  offspring_isolation_time <- rep(NA_real_, num_offspring)
+  isolation_candidates <- offspring_traced & offspring_symptomatic
+  if (any(isolation_candidates)) {
+    p_isolate <- resolve_probability(prob_isolate_given_traced,
+                                     offspring_absolute_symptom_time[isolation_candidates],
+                                     "prob_isolate_given_traced")
+    offspring_isolated[isolation_candidates] <-
+      as.logical(rbinom(n = sum(isolation_candidates), size = 1, prob = p_isolate))
+    if (any(offspring_isolated)) {
+      iso_delay <- if (is.null(onset_to_isolation)) {
+        rep(0, sum(offspring_isolated))
+      } else {
+        onset_to_isolation(n = sum(offspring_isolated))
+      }
+      ## Measured from infection, like the other relative times on the frame.
+      offspring_isolation_time[offspring_isolated] <-
+        offspring_incubation_period[offspring_isolated] + iso_delay
+    }
+  }
+
+  ################################################################################################################################
   ## Step 2: Deciding whether symptomatic offspring are potentially hospitalised
   ##  - In this section, we calculate the potential hospitalisation status for the (symptomatic) offspring cases, i.e. whether they would
   ##    all other factors notwithstanding, visit hospital. In the subsequent section, we will see whether they are *actually* hospitalised
@@ -142,18 +194,34 @@ complete_offspring_info <- function(
     } else {
       prob_hosp[i] <- resolve_probability(prob_hospitalised_genPop, t_onset, "prob_hospitalised_genPop")
     }
+
+    ## Traced cases may present more readily. The multiplier defaults to 1 (no effect) and
+    ## the result is capped so it stays a probability.
+    if (offspring_traced[si]) {
+      hosp_mult <- resolve_positive(prob_hospitalised_multiplier_traced, t_onset,
+                                    "prob_hospitalised_multiplier_traced")
+      prob_hosp[i] <- min(prob_hosp[i] * hosp_mult, 1)
+    }
   }
 
   offspring_potentially_hosp <- rep(FALSE, num_offspring)
   offspring_potentially_hosp[offspring_symptomatic] <- as.logical(rbinom(n = sum(offspring_symptomatic), size = 1, prob = prob_hosp)) # assigning potential hospitalisation status; asymptomatics aren't hospitalised, so only update vector for symptomatics
   offspring_potentially_hosp_time <- rep(NA_real_, num_offspring)
   ## Draw raw hospitalisation delays and apply the delay factor resolved at each
-  ## potentially hospitalised offspring's symptom-onset time.
+  ## potentially hospitalised offspring's symptom-onset time. Traced cases carry an extra
+  ## multiplier on top (defaults to 1), so tracing can shorten time to admission.
   raw_hosp_delays <- onset_to_hospitalisation(n = sum(offspring_potentially_hosp))
   hosp_indices <- which(offspring_potentially_hosp)
   delay_factors <- resolve_positive(hospitalisation_delay_factor,
                                     offspring_absolute_symptom_time[hosp_indices],
                                     "hospitalisation_delay_factor")
+  if (length(hosp_indices) > 0 && any(offspring_traced[hosp_indices])) {
+    traced_hosp <- offspring_traced[hosp_indices]
+    traced_factors <- resolve_positive(hospitalisation_delay_factor_traced,
+                                       offspring_absolute_symptom_time[hosp_indices[traced_hosp]],
+                                       "hospitalisation_delay_factor_traced")
+    delay_factors[traced_hosp] <- delay_factors[traced_hosp] * traced_factors
+  }
   offspring_potentially_hosp_time[offspring_potentially_hosp] <- raw_hosp_delays * delay_factors
 
   ################################################################################################################################
@@ -271,6 +339,10 @@ complete_offspring_info <- function(
   offspring_dataframe$time_outcome_relative <-              offspring_incubation_period + offspring_outcome_time
   offspring_dataframe$time_outcome_absolute <-              offspring_dataframe$time_infection_absolute + offspring_dataframe$time_outcome_relative
   offspring_dataframe$funeral_safety <-                     offspring_funeral_safety
+  offspring_dataframe$traced <-                             offspring_traced
+  offspring_dataframe$isolated <-                           offspring_isolated
+  offspring_dataframe$time_isolation_relative <-            offspring_isolation_time
+  offspring_dataframe$time_isolation_absolute <-            offspring_dataframe$time_infection_absolute + offspring_isolation_time
   offspring_dataframe$n_offspring <-                        rep(NA_integer_, num_offspring)
   offspring_dataframe$offspring_generated <-                rep(FALSE, num_offspring)
 
