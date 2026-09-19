@@ -30,6 +30,7 @@ branching_process_main(
   r0_solve_seed = NULL,
   trace_coverage = 0,
   onset_to_hospitalisation_traced = NULL,
+  prob_hospitalised_traced = NULL,
   prob_hospitalised_multiplier_traced = 1,
   presymptomatic_transmission = TRUE,
   check_presymptomatic = TRUE,
@@ -158,6 +159,12 @@ each traced case's own drawn delay, so tracing can only bring an admission forwa
 push it back. \code{NULL} (default) means tracing does not change admission timing. A warning is
 raised if this is not comfortably below the untraced delay distribution, since a value above
 it would silently do nothing.}
+
+\item{prob_hospitalised_traced}{Numeric in \verb{[0, 1]} or function(t), or NULL. The absolute
+P(hospitalised | symptomatic) for traced cases, replacing the untraced value outright. Use this
+when a scenario says "traced cases are hospitalised with probability 0.9" — a multiplier cannot
+pin that down when the untraced probability is itself time-varying. \code{NULL} (default) means no
+effect. Takes precedence over \code{prob_hospitalised_multiplier_traced}; supplying both is an error.}
 
 \item{prob_hospitalised_multiplier_traced}{Positive numeric or function(t). Multiplier on
 P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect). Note

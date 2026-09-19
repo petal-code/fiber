@@ -74,6 +74,11 @@
 #'   push it back. `NULL` (default) means tracing does not change admission timing. A warning is
 #'   raised if this is not comfortably below the untraced delay distribution, since a value above
 #'   it would silently do nothing.
+#' @param prob_hospitalised_traced Numeric in `[0, 1]` or function(t), or NULL. The absolute
+#'   P(hospitalised | symptomatic) for traced cases, replacing the untraced value outright. Use this
+#'   when a scenario says "traced cases are hospitalised with probability 0.9" — a multiplier cannot
+#'   pin that down when the untraced probability is itself time-varying. `NULL` (default) means no
+#'   effect. Takes precedence over `prob_hospitalised_multiplier_traced`; supplying both is an error.
 #' @param prob_hospitalised_multiplier_traced Positive numeric or function(t). Multiplier on
 #'   P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect). Note
 #'   that faster admission raises the *realised* hospitalisation rate on its own, independently of
@@ -274,7 +279,8 @@ branching_process_main <- function(
   ## sooner, and optionally more often.
   trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
   onset_to_hospitalisation_traced = NULL,   # scalar/function(t): flat onset-to-admission delay for traced cases (caps their own); NULL = no effect
-  prob_hospitalised_multiplier_traced = 1,  # scalar/function(t): multiplier on P(hospitalised | symptomatic) for traced cases
+  prob_hospitalised_traced = NULL,          # scalar/function(t): ABSOLUTE P(hospitalised | symptomatic) for traced cases; NULL = no effect
+  prob_hospitalised_multiplier_traced = 1,  # scalar/function(t): multiplier on P(hospitalised | symptomatic) for traced cases (ignored if the absolute is set)
 
   ## Presymptomatic transmission. TRUE (the model's natural behaviour) lets contacts happen
   ## before the infector's symptom onset; FALSE truncates contact times to start at onset.
@@ -461,6 +467,7 @@ branching_process_main <- function(
       p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
       trace_coverage               = trace_coverage,
       prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
+      prob_hospitalised_traced            = prob_hospitalised_traced,
       onset_to_hospitalisation_traced     = onset_to_hospitalisation_traced,
       presymptomatic_transmission         = presymptomatic_transmission
     )
@@ -543,6 +550,7 @@ branching_process_main <- function(
     obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence,
     trace_coverage                = trace_coverage,
+    prob_hospitalised_traced      = prob_hospitalised_traced,
     baseline_risk_genPop          = baseline_risk_genPop,
     baseline_risk_hcw             = baseline_risk_hcw,
     baseline_risk_funeral         = baseline_risk_funeral
@@ -560,6 +568,7 @@ branching_process_main <- function(
       mn_contacts_hcw              = mn_contacts_hcw,
       mn_contacts_funeral          = mn_contacts_funeral,
       prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
+      prob_hospitalised_traced            = prob_hospitalised_traced,
       onset_to_hospitalisation_traced     = onset_to_hospitalisation_traced,
       presymptomatic_transmission         = presymptomatic_transmission
     )
@@ -613,6 +622,16 @@ branching_process_main <- function(
   if (!is.logical(presymptomatic_transmission) || length(presymptomatic_transmission) != 1L ||
       is.na(presymptomatic_transmission)) {
     stop("`presymptomatic_transmission` must be a single logical value.", call. = FALSE)
+  }
+
+  ## The absolute traced hospitalisation probability and the multiplier are two ways of
+  ## saying the same thing; accepting both would silently ignore one of them.
+  if (!is.null(prob_hospitalised_traced) &&
+      !(is.numeric(prob_hospitalised_multiplier_traced) &&
+        length(prob_hospitalised_multiplier_traced) == 1L &&
+        isTRUE(all.equal(prob_hospitalised_multiplier_traced, 1)))) {
+    stop("Supply either `prob_hospitalised_traced` (an absolute probability) or `prob_hospitalised_multiplier_traced` (a multiplier), not both.",
+         call. = FALSE)
   }
 
   ####################################################################################
@@ -1107,6 +1126,7 @@ branching_process_main <- function(
                                                        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
                                                        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
                                                        onset_to_hospitalisation_traced = onset_to_hospitalisation_traced,
+                                                       prob_hospitalised_traced = prob_hospitalised_traced,
                                                        prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
                                                        incubation_period = incubation_period,
                                                        onset_to_hospitalisation = onset_to_hospitalisation,

@@ -31,7 +31,8 @@ complete_offspring_info <- function(
     ## offspring functions (a contact's tier determines how likely it was to be traced).
     ## Traced cases may be admitted sooner and more often. Both default to no effect.
     onset_to_hospitalisation_traced = NULL,    ## scalar or function(t): flat onset-to-admission delay for traced cases (caps their own delay); NULL = no effect
-    prob_hospitalised_multiplier_traced = 1,   ## scalar or function(t): multiplier on P(hospitalised | symptomatic) for traced cases
+    prob_hospitalised_traced = NULL,           ## scalar or function(t): ABSOLUTE P(hospitalised | symptomatic) for traced cases; NULL = no effect
+    prob_hospitalised_multiplier_traced = 1,   ## scalar or function(t): multiplier on P(hospitalised | symptomatic) for traced cases (ignored if the absolute is set)
 
     ## Delay distributions
     incubation_period,                   ## between infection occurring and symptoms occurring (in symptomatic individuals)
@@ -93,6 +94,9 @@ complete_offspring_info <- function(
   validate_probability_or_time_varying(p_unsafe_funeral_comm_genPop, "p_unsafe_funeral_comm_genPop")
   validate_probability_or_time_varying(p_unsafe_funeral_hosp_genPop, "p_unsafe_funeral_hosp_genPop")
   validate_positive_or_time_varying(prob_hospitalised_multiplier_traced, "prob_hospitalised_multiplier_traced")
+  if (!is.null(prob_hospitalised_traced)) {
+    validate_probability_or_time_varying(prob_hospitalised_traced, "prob_hospitalised_traced")
+  }
   if (!is.null(onset_to_hospitalisation_traced) && !is.function(onset_to_hospitalisation_traced) &&
       (!is.numeric(onset_to_hospitalisation_traced) || length(onset_to_hospitalisation_traced) != 1L ||
        is.na(onset_to_hospitalisation_traced) || onset_to_hospitalisation_traced < 0)) {
@@ -180,12 +184,18 @@ complete_offspring_info <- function(
       prob_hosp[i] <- resolve_probability(prob_hospitalised_genPop, t_onset, "prob_hospitalised_genPop")
     }
 
-    ## Traced cases may present more readily. The multiplier defaults to 1 (no effect) and
-    ## the result is capped so it stays a probability.
+    ## Traced cases may present more readily, specified either as an absolute
+    ## probability (which replaces the untraced value outright) or as a multiplier on
+    ## it. The absolute wins when both are given; both default to no effect.
     if (offspring_traced[si]) {
-      hosp_mult <- resolve_positive(prob_hospitalised_multiplier_traced, t_onset,
-                                    "prob_hospitalised_multiplier_traced")
-      prob_hosp[i] <- min(prob_hosp[i] * hosp_mult, 1)
+      if (!is.null(prob_hospitalised_traced)) {
+        prob_hosp[i] <- resolve_probability(prob_hospitalised_traced, t_onset,
+                                            "prob_hospitalised_traced")
+      } else {
+        hosp_mult <- resolve_positive(prob_hospitalised_multiplier_traced, t_onset,
+                                      "prob_hospitalised_multiplier_traced")
+        prob_hosp[i] <- min(prob_hosp[i] * hosp_mult, 1)
+      }
     }
   }
 

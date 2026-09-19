@@ -150,7 +150,11 @@ case is then:
 - **admitted sooner**: `onset_to_hospitalisation_traced` is a flat onset-to-admission delay in days.
   It **caps** rather than replaces each case's own drawn delay, so tracing can only bring an admission
   forward, never push it back. `NULL` (default) means no effect.
-- **admitted more often**, via `prob_hospitalised_multiplier_traced` (capped at 1, default 1).
+- **admitted more often**, either as an absolute probability via
+  `prob_hospitalised_traced` (replaces the untraced value outright — use this when a scenario says
+  "traced cases are hospitalised with probability 0.9", which a multiplier cannot pin down against a
+  time-varying baseline) or as `prob_hospitalised_multiplier_traced` (capped at 1, default 1).
+  Supplying both is an error.
 
 Faster admission raises the *realised* hospitalisation rate on its own, independently of the
 multiplier, because admission is more likely to beat the community outcome.

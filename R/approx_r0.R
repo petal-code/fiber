@@ -87,6 +87,7 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
   if (is.null(trace_cov_0)) trace_cov_0 <- 0
   hosp_mult_traced <- .at_t0(args$prob_hospitalised_multiplier_traced)
   if (is.null(hosp_mult_traced)) hosp_mult_traced <- 1
+  hosp_abs_traced <- .at_t0(args$prob_hospitalised_traced)
   traced_delay <- .at_t0(args$onset_to_hospitalisation_traced)
 
   ## 1. Incubation period
@@ -116,7 +117,11 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
   ## 5. Potential hospitalisation. Traced cases may be admitted more often and
   ## sooner (both multipliers default to 1, i.e. no effect).
   p_hosp_i <- rep(prob_hosp_g, n)
-  p_hosp_i[traced] <- pmin(prob_hosp_g * hosp_mult_traced, 1)
+  p_hosp_i[traced] <- if (!is.null(hosp_abs_traced)) {
+    hosp_abs_traced
+  } else {
+    pmin(prob_hosp_g * hosp_mult_traced, 1)
+  }
   potentially_hosp <- symptomatic & as.logical(rbinom(n, 1, p_hosp_i))
 
   T_hosp <- rep(NA_real_, n)

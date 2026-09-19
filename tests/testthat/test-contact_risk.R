@@ -681,3 +681,31 @@ test_that("presymptomatic_transmission must be a single logical", {
   expect_error(do.call(branching_process_main, bpm_args(presymptomatic_transmission = "no")),
                "single logical")
 })
+
+test_that("prob_hospitalised_traced sets an absolute admission probability", {
+  ## The multiplier cannot pin the traced probability at a fixed value when the
+  ## untraced one is time-varying, so an absolute override exists alongside it.
+  args <- bpm_args(
+    contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.9),
+    trace_coverage = 1,
+    prob_hospitalised_genPop = 0.1, prob_hospitalised_hcw = 0.1,
+    prob_hospitalised_traced = 0.95,
+    check_final_size = 800
+  )
+  out <- do.call(branching_process_main, args)
+  real <- out$tdf[!is.na(out$tdf$time_infection_absolute) & out$tdf$symptomatic, ]
+  ## Traced cases are admitted far more often than untraced ones, and close to the
+  ## absolute value asked for (below it, since admission must also beat the outcome).
+  expect_gt(mean(real$hospitalisation[real$traced]),
+            mean(real$hospitalisation[!real$traced]) + 0.3)
+  expect_gt(mean(real$hospitalisation[real$traced]), 0.7)
+})
+
+test_that("the absolute and multiplier forms of traced hospitalisation are exclusive", {
+  expect_error(
+    do.call(branching_process_main,
+            bpm_args(prob_hospitalised_traced = 0.9,
+                     prob_hospitalised_multiplier_traced = 2)),
+    "not both"
+  )
+})
