@@ -123,15 +123,50 @@ test_that("case weights over-represent high-risk tiers", {
   expect_gt(r$case_weights[4], r$fractions[4])
 })
 
-test_that("contact_risk_gradient builds a log-spaced gradient", {
+test_that("contact_risk_gradient builds a log-spaced gradient anchored on the top tier", {
   g <- contact_risk_gradient(n_levels = 5, ratio = 16, trace_prob_range = c(0.1, 0.9))
-  expect_equal(g$relative_risk[1], 1)
-  expect_equal(g$relative_risk[5], 16)
+  ## The highest tier is the reference, so the risks run 1/ratio up to 1.
+  expect_equal(g$reference, 5L)
+  expect_equal(g$relative_risk[5], 1)
+  expect_equal(g$relative_risk[1], 1 / 16)
+  expect_equal(g$max_relative_risk, 1)
   ## Log-spaced: successive ratios are constant.
   expect_equal(diff(log(g$relative_risk)), rep(log(16) / 4, 4))
   expect_equal(g$trace_prob, seq(0.1, 0.9, length.out = 5))
   ## ratio = 1 degenerates to a flat structure.
   expect_equal(contact_risk_gradient(ratio = 1)$relative_risk, rep(1, 5))
+})
+
+test_that("the highest-risk tier is the reference by default", {
+  ## However the relative risks are written, they are rescaled so the top tier is 1
+  ## and the baseline risk describes the riskiest contact.
+  r <- make_contact_risk(fractions = c(0.6, 0.25, 0.1, 0.04, 0.01),
+                         relative_risk = c(1, 2, 5, 10, 25))
+  expect_equal(r$reference, 5L)
+  expect_equal(r$relative_risk, c(0.04, 0.08, 0.2, 0.4, 1))
+  expect_equal(r$max_relative_risk, 1)
+  ## Every relative risk is then a valid attenuation factor, and the mean
+  ## attenuates rather than amplifies.
+  expect_true(all(r$relative_risk > 0 & r$relative_risk <= 1))
+  expect_lte(r$mean_relative_risk, 1)
+})
+
+test_that("changing the reference tier is a pure reparameterisation", {
+  ## Only the product baseline_risk * relative_risk[l] is ever used, so anchoring on
+  ## a different tier and rescaling the baseline risk to match must leave every
+  ## per-contact probability -- and hence the whole model -- untouched.
+  frac <- c(0.6, 0.25, 0.1, 0.04, 0.01)
+  rr   <- c(1, 2, 5, 10, 25)
+  hi <- make_contact_risk(frac, rr)                  # default: top tier
+  lo <- make_contact_risk(frac, rr, reference = 1)   # bottom tier
+
+  p_lo <- 0.02
+  p_hi <- p_lo * max(rr)
+  expect_equal(p_hi * hi$relative_risk, p_lo * lo$relative_risk)
+
+  ## R0 and the case-weight distribution are likewise invariant.
+  expect_equal(20 * p_hi * hi$mean_relative_risk, 20 * p_lo * lo$mean_relative_risk)
+  expect_equal(hi$case_weights, lo$case_weights)
 })
 
 ## --- R0 approximation and its inversion --------------------------------
@@ -265,12 +300,16 @@ test_that("baseline_risk = 1 with flat tiers makes every contact an infection", 
 })
 
 test_that("high-risk tiers transmit more often than low-risk tiers", {
+  ## Two tiers, the top five times riskier. The top tier is the reference, so the
+  ## baseline risk IS the top tier's transmission probability and the bottom tier
+  ## gets a fifth of it.
   risk <- make_contact_risk(fractions = rep(0.5, 2), relative_risk = c(1, 5))
+  expect_equal(risk$relative_risk, c(0.2, 1))
   set.seed(31)
   o <- offspring_function_genPop(
     parent_info = parent_genPop(),
     mn_contacts_genPop = 4000, overdisp_contacts_genPop = 2000,
-    baseline_risk_genPop = 0.1, contact_risk_genPop = risk,
+    baseline_risk_genPop = 0.5, contact_risk_genPop = risk,
     Tg_shape_genPop = 4, Tg_rate_genPop = 1,
     prop_etu = 1, etu_efficacy = 0, general_hospital_quarantine_efficacy = 0,
     ppe_coverage_hcw = 0, ppe_efficacy = 0,
@@ -282,20 +321,32 @@ test_that("high-risk tiers transmit more often than low-risk tiers", {
   expect_lt(abs(rate[["2"]] - 0.5), 0.05)
 })
 
-test_that("a baseline risk that pushes the top tier above 1 is rejected", {
-  risk <- make_contact_risk(fractions = rep(0.5, 2), relative_risk = c(1, 5))
-  expect_error(
+test_that("the top tier's probability cannot exceed 1", {
+  run <- function(risk, p0) {
+    set.seed(71)
     offspring_function_genPop(
       parent_info = parent_genPop(),
       mn_contacts_genPop = 50, overdisp_contacts_genPop = 25,
-      baseline_risk_genPop = 0.5, contact_risk_genPop = risk,
+      baseline_risk_genPop = p0, contact_risk_genPop = risk,
       Tg_shape_genPop = 4, Tg_rate_genPop = 1,
       prop_etu = 1, etu_efficacy = 0, general_hospital_quarantine_efficacy = 0,
       ppe_coverage_hcw = 0, ppe_efficacy = 0,
       prob_hcw_cond_genPop_comm = 0, prob_hcw_cond_genPop_hospital = 0
-    ),
-    "exceeds 1"
-  )
+    )
+  }
+
+  ## Default convention: the top tier IS the reference, so its probability equals
+  ## the baseline risk. The constraint can never bind, even at a baseline risk of 1.
+  default_risk <- make_contact_risk(fractions = rep(0.5, 2), relative_risk = c(1, 5))
+  expect_s3_class(run(default_risk, 1), "data.frame")
+
+  ## Anchoring on the LOWEST tier brings the moving bound back -- and it is enforced.
+  low_ref <- make_contact_risk(fractions = rep(0.5, 2), relative_risk = c(1, 5),
+                               reference = 1)
+  expect_equal(low_ref$max_relative_risk, 5)
+  expect_error(run(low_ref, 0.5), "exceeds 1")
+  ## Below the bound it is fine: 0.2 * 5 = 1 exactly.
+  expect_s3_class(run(low_ref, 0.2), "data.frame")
 })
 
 test_that("presymptomatic_transmission = FALSE pushes all contacts past symptom onset", {
@@ -531,11 +582,22 @@ test_that("per-route risk structures are independent and reported back", {
 })
 
 test_that("an infeasible baseline risk fails before the simulation starts", {
+  ## Only reachable by anchoring on a tier that is not the riskiest -- under the
+  ## default convention the baseline risk is bounded by 1 and nothing else.
+  low_ref <- make_contact_risk(fractions = rep(0.2, 5),
+                               relative_risk = c(1, 2, 4, 8, 16),
+                               reference = 1)
   expect_error(
     do.call(branching_process_main,
-            bpm_args(contact_risk = contact_risk_gradient(5, ratio = 10),
-                     baseline_risk_genPop = 0.5)),
+            bpm_args(contact_risk = low_ref, baseline_risk_genPop = 0.5)),
     "highest-risk tier"
+  )
+  ## The same structure under the default convention runs without complaint.
+  expect_s3_class(
+    do.call(branching_process_main,
+            bpm_args(contact_risk = contact_risk_gradient(5, ratio = 16),
+                     baseline_risk_genPop = 0.5))$tdf,
+    "data.frame"
   )
 })
 

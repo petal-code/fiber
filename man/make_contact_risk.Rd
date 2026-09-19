@@ -8,7 +8,7 @@ make_contact_risk(
   fractions = rep(0.2, 5),
   relative_risk = rep(1, 5),
   trace_prob = 0,
-  reference = 1L,
+  reference = which.max(relative_risk),
   labels = NULL
 )
 }
@@ -17,7 +17,9 @@ make_contact_risk(
 to 1. Its length sets the number of tiers. Defaults to five equal shares.}
 
 \item{relative_risk}{Numeric vector, same length as \code{fractions}. Risk of
-each tier relative to the reference tier. Must be positive and finite.}
+each tier relative to the reference tier. Must be positive and finite. Only
+the ratios matter -- the vector is rescaled so the reference tier is exactly
+1 -- so \code{c(1, 2, 5)} and \code{c(0.2, 0.4, 1)} describe the same structure.}
 
 \item{trace_prob}{Numeric vector in \code{[0,1]}, same length as
 \code{fractions} (or a single value recycled across tiers). Probability that
@@ -26,7 +28,9 @@ Multiplied by the time-varying \code{trace_coverage(t)} programme lever at
 run time. Defaults to 0 (no tracing).}
 
 \item{reference}{Integer index (1-based) of the reference tier -- the tier the
-baseline risk parameter describes. Defaults to the first tier.}
+baseline risk parameter describes. Defaults to the \emph{highest-risk} tier,
+which keeps every relative risk in \code{(0, 1]} and the baseline risk
+unconstrained; see the details above.}
 
 \item{labels}{Optional character vector of tier names, same length as
 \code{fractions}. Used in the contact log and summaries. Defaults to
@@ -58,9 +62,30 @@ relative risks are divided through by that tier's value, so the baseline risk
 parameter is literally the per-contact transmission probability of the
 reference tier.
 
-The default is five equally sized tiers with equal relative risk and no
-tracing -- a deliberately flat structure that adds the contact bookkeeping
-without imposing any heterogeneity or intervention effect. Use
+\strong{By default the reference is the highest-risk tier}, so relative risks
+come out in \code{(0, 1]} and the baseline risk is the transmission probability
+of the riskiest contact -- a household or caregiving exposure, say, which is the
+quantity secondary attack rates actually measure. Three things follow:
+\itemize{
+\item The feasibility constraint \code{baseline_risk * max_relative_risk <= 1}
+reduces to \code{baseline_risk <= 1}, so it can never bind. Anchoring on
+the lowest tier instead leaves an upper bound on the baseline risk that
+moves with the relative-risk spread.
+\item Both \code{baseline_risk} and the relative risks live in \code{[0, 1]}
+independently, which gives a calibration a rectangular parameter space
+rather than one whose bounds shift as the spread is fitted.
+\item \code{mean_relative_risk} is then \code{<= 1} and attenuates rather than
+amplifies, so R0 sweeps from 0 to \code{mn_contacts * mean_relative_risk}
+as the baseline risk sweeps from 0 to 1.
+}
+Naming a different \code{reference} is allowed and changes nothing about the
+model -- it is a pure reparameterisation, since only the product
+\code{baseline_risk * relative_risk[l]} enters anywhere -- but it does bring the
+moving feasibility bound back.
+
+The default structure is five equally sized tiers with equal relative risk and
+no tracing -- deliberately flat, adding the contact bookkeeping without imposing
+any heterogeneity or intervention effect. Use
 \code{\link{contact_risk_gradient}} to build a graded structure from a single
 spread parameter.
 }
@@ -68,7 +93,9 @@ spread parameter.
 ## Default: five flat tiers, no tracing
 make_contact_risk()
 
-## Most contacts low risk, a small high-risk tail that is easier to trace
+## Most contacts low risk, a small high-risk tail that is easier to trace.
+## Written as risks relative to the lowest tier, but rescaled on the way in so
+## the top tier is 1 -- the baseline risk is then that tier's own probability.
 make_contact_risk(fractions     = c(0.6, 0.25, 0.1, 0.04, 0.01),
                   relative_risk = c(1, 2, 5, 10, 25),
                   trace_prob    = c(0.1, 0.2, 0.4, 0.7, 0.9))

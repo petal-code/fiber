@@ -71,6 +71,21 @@ reference tier's own value, so `baseline_risk` is literally that tier's per-cont
 probability. Default is five equal, flat tiers with no tracing. `contact_risk_gradient()` builds a
 log-spaced gradient from a single `ratio`, optionally with a `trace_prob_range`.
 
+**The reference is the highest-risk tier by default.** Relative risks therefore come out in `(0, 1]`
+and `baseline_risk` is the transmission probability of the riskiest contact — a household or
+caregiving exposure, which is what secondary attack rates measure. Three reasons this is the default:
+
+1. The feasibility constraint `baseline_risk * max_relative_risk <= 1` reduces to
+   `baseline_risk <= 1` and can never bind. Anchoring on the lowest tier leaves an upper bound on
+   `baseline_risk` that moves with the relative-risk spread.
+2. `baseline_risk` and the relative risks then both live in `[0, 1]` independently, giving ABC a
+   rectangular parameter space instead of one whose bounds shift as the spread is fitted.
+3. `baseline_risk` anchors to a measurable quantity rather than the unmeasurable casual-contact rate.
+
+Naming a different `reference` is allowed and is a **pure reparameterisation** — only the product
+`baseline_risk * relative_risk[l]` is ever used, so it cannot change a simulated outcome (pinned by
+test). It does bring the moving feasibility bound back.
+
 Structures are per route (`contact_risk_genPop` / `_hcw` / `_funeral`), each falling back to a shared
 `contact_risk`. Typical use: set `contact_risk` once for genPop and HCW, override
 `contact_risk_funeral`.
@@ -82,7 +97,12 @@ depends on the tier a case was infected in (i.e. contact tracing) must average o
 not the raw fractions.
 
 The top tier's probability must stay ≤ 1, so `baseline_risk * max_relative_risk <= 1`. This is
-checked up front across the simulation horizon rather than clipped mid-run.
+checked up front across the simulation horizon rather than clipped mid-run. Under the default
+reference convention `max_relative_risk == 1`, so the check only bites for a user-chosen non-max
+reference.
+
+Note `mean_relative_risk` is then ≤ 1 and **attenuates** rather than amplifies: R0 sweeps from 0 up
+to `mn_contacts * mean_relative_risk` as `baseline_risk` goes from 0 to 1.
 
 ### R0 Calibration (`R/approx_r0.R`)
 
