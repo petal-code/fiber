@@ -124,8 +124,8 @@ TRACING_SETUPS <- list(
 
 ## --- Base argument list ------------------------------------------------------
 ## Mean contacts is fixed; the R0 solver then finds the baseline per-contact risk
-## that delivers the target. The funeral share of R0 is taken from the paper's own
-## default offspring means rather than invented, so the route split stays faithful.
+## that delivers the target R0 at the specified funeral share (see FUNERAL_SHARE
+## below).
 MN_CONTACTS <- c(genPop = 15, hcw = 15, funeral = 20)
 
 base_args <- function() {
@@ -147,17 +147,15 @@ base_args <- function() {
   a
 }
 
-## Funeral share of R0 implied by the paper's defaults, via the D / F multipliers.
-funeral_share <- local({
-  a <- base_args()
-  d <- suppressWarnings(make_base_args())
-  a$baseline_risk_genPop <- a$baseline_risk_hcw <- a$baseline_risk_funeral <- 0.1
-  inv <- compute_r0_invariants(a, n = 30000, seed = 1)
-  D <- r0_direct_multiplier(inv, a$etu_efficacy, a$general_hospital_quarantine_efficacy)
-  F_ <- r0_funeral_multiplier(inv, a$safe_funeral_efficacy)
-  rf <- d$mn_offspring_funeral * F_
-  rf / (d$mn_offspring_genPop * D + rf)
-})
+## Share of t = 0 transmission going through unsafe funerals. This is an INPUT,
+## the same way the paper treats it -- `run_single_simulation.R` sets
+## FUNERAL_FRAC <- 0.25 and solves the offspring means from it, and the ABC fits
+## `prop_funeral` as a free parameter. Do not try to back it out of the package's
+## default offspring means: those are placeholders the paper overwrites, and the
+## share they imply (~0.09, because F carries the CFR and safe-burial thinning)
+## is not the calibrated quantity.
+FUNERAL_SHARE <- as.numeric(Sys.getenv("FUNERAL_SHARE", unset = "0.25"))
+funeral_share <- FUNERAL_SHARE
 
 ## --- Calibrate R0 separately for each presymptomatic setting -----------------
 ## Removing presymptomatic transmission shifts Q_g and hence D, so the same
@@ -181,7 +179,7 @@ cat(sprintf("West Africa Q curves | R0 target %.2f | cap %d | %d reps per point\
             R0_TARGET, CAP, N_REPS))
 cat(sprintf("mean contacts: genPop %g, HCW %g, funeral %g\n",
             MN_CONTACTS[["genPop"]], MN_CONTACTS[["hcw"]], MN_CONTACTS[["funeral"]]))
-cat(sprintf("funeral share of R0 (from the paper's defaults): %.3f\n", funeral_share))
+cat(sprintf("funeral share of R0 at t = 0 (specified, as in the paper): %.2f\n", funeral_share))
 print(data.frame(
   tier          = TIER_LABELS,
   fraction      = round(risk_no_tracing$fractions, 4),
