@@ -14,6 +14,7 @@ offspring_function_hcw(
   Tg_rate_hcw = NULL,
   prob_hospital_cond_hcw_preAdm = NULL,
   trace_coverage = 0,
+  return_contact_log = TRUE,
   presymptomatic_transmission = TRUE,
   ppe_coverage_hcw = NULL,
   ppe_efficacy = NULL,
@@ -58,6 +59,10 @@ pre-admission contact occurs in the hospital setting while the HCW is working.}
 
 \item{trace_coverage}{Numeric in \code{[0,1]} or function(t). Programme-level contact
 tracing coverage, multiplying each tier's \code{trace_prob}.}
+
+\item{return_contact_log}{Logical scalar. \code{FALSE} skips building the contact log for
+this parent and returns an empty one, saving the per-parent data.frame construction. See
+\code{\link{branching_process_main}} for why that matters at scale.}
 
 \item{presymptomatic_transmission}{Logical scalar. \code{TRUE} (default) lets contacts occur
 before the parent's symptom onset; \code{FALSE} truncates contact times to start at the end

@@ -261,8 +261,29 @@ otherwise), `record_type` (`"contact"` / `"infection"`), `class`, `infection_loc
 `"no_transmission"`, the route's intervention layer, or `"obv_pep"`. This is the denominator for
 anything tracing- or prophylaxis-related.
 
+The log is much larger than `tdf` — roughly one row per contact rather than per infection, so tens of
+rows per case. `return_contact_log = FALSE` switches it off (an empty frame comes back instead) for
+large sweeps that only need final sizes. It changes nothing else: the RNG stream, and therefore the
+transmission tree, is identical either way.
+
 `sim_info` additionally carries the resolved per-route risk structures, the baseline risks actually
 used (solved from `r0_target` where applicable), and the R0 inversion diagnostics.
+
+### Why the run stopped
+
+`sim_info$stop_reason` says which of the three loop exits fired:
+
+- `"outbreak_ended"` — every case was expanded and no offspring remained. A genuine final size.
+- `"final_size_cap"` — `check_final_size` was reached with cases still unexpanded. The final size is
+  **censored**: it measures the cap, not transmission. Comparing means across arms that differ in how
+  often they hit the cap compares caps, not epidemiology.
+- `"susceptibles"` — the susceptible pool was exhausted. Also censored (see the susceptible-depletion
+  issue: depletion is a hard stop, not a saturation).
+
+`sim_info$hit_final_size_cap` is the logical shortcut, and `sim_info$n_unexpanded` counts the cases
+left in the queue. By default a capped run **warns** and any other run emits a short message saying
+how it ended; `quiet = TRUE` suppresses both (the `sim_info` fields are still set). `summarise_output()`
+reports both fields.
 
 `summarise_output()` takes an optional `contact_log` argument and then reports contact counts by tier
 and location, the realised per-tier attack rate, tracing counts, and the `blocked_by` breakdown.

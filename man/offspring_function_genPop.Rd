@@ -13,6 +13,7 @@ offspring_function_genPop(
   Tg_shape_genPop = NULL,
   Tg_rate_genPop = NULL,
   trace_coverage = 0,
+  return_contact_log = TRUE,
   presymptomatic_transmission = TRUE,
   prop_etu = NULL,
   etu_efficacy = NULL,
@@ -61,7 +62,11 @@ for genPop parents (before truncation).}
 for genPop parents (before truncation). Mean GT is \code{Tg_shape_genPop / Tg_rate_genPop}.}
 
 \item{trace_coverage}{Numeric in \code{[0,1]} or function(t). Programme-level contact
-tracing coverage, multiplying each tier's \code{trace_prob}. Defaults to 0.}
+tracing coverage, multiplying each tier's \code{trace_prob}.}
+
+\item{return_contact_log}{Logical scalar. \code{FALSE} skips building the contact log for
+this parent and returns an empty one, saving the per-parent data.frame construction. See
+\code{\link{branching_process_main}} for why that matters at scale.}
 
 \item{presymptomatic_transmission}{Logical scalar. \code{TRUE} (default) lets contacts occur
 at any point between the parent's infection and outcome, including before symptom onset.

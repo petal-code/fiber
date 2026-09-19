@@ -306,6 +306,11 @@ summarise_output <- function(
     n_obv_pep_breakthroughs           = n_obv_pep_breakthroughs,
     prop_obv_pep_prevented_among_adherent = prop_obv_pep_prevented_among_adherent,
 
+    ## Was this run censored by check_final_size? A censored final size measures the
+    ## cap rather than transmission, so anything comparing final sizes must check this.
+    hit_final_size_cap       = if (!is.null(sim_info$hit_final_size_cap)) sim_info$hit_final_size_cap else NA,
+    stop_reason              = if (!is.null(sim_info$stop_reason)) sim_info$stop_reason else NA_character_,
+
     ## Contact tracing among realised cases
     n_cases_traced           = n_cases_traced,
     prop_cases_traced        = prop_cases_traced,

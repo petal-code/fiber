@@ -13,6 +13,7 @@ offspring_function_funeral(
   Tg_shape_funeral = NULL,
   Tg_rate_funeral = NULL,
   trace_coverage = 0,
+  return_contact_log = TRUE,
   safe_funeral_efficacy = NULL,
   obv_pep_enabled = FALSE,
   obv_pep_coverage = 0,
@@ -57,6 +58,10 @@ outcome to funeral contacts.}
 
 \item{trace_coverage}{Numeric in \code{[0,1]} or function(t). Programme-level contact
 tracing coverage, multiplying each tier's \code{trace_prob}.}
+
+\item{return_contact_log}{Logical scalar. \code{FALSE} skips building the contact log for
+this parent and returns an empty one, saving the per-parent data.frame construction. See
+\code{\link{branching_process_main}} for why that matters at scale.}
 
 \item{safe_funeral_efficacy}{Numeric in \code{[0,1]}. Efficacy of a safe burial in
 preventing transmission (1 = fully blocking, 0 = equivalent to an unsafe funeral). The

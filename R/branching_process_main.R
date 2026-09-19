@@ -96,6 +96,15 @@
 #'   in large calibration runs. See [approx_presymptomatic_transmission()].
 #' @param presymptomatic_warn_threshold Numeric in `[0, 1]`. Presymptomatic share above which
 #'   `check_presymptomatic` warns. Defaults to 0.1.
+#' @param return_contact_log Logical scalar. `TRUE` (default) returns the full contact log. `FALSE`
+#'   skips building it per parent and accumulating it, and returns a 0-row frame. The log is roughly
+#'   one row per contact, so at `check_final_size = 30000` with ~15 contacts per case it is around
+#'   450,000 rows (~47 MB) **per run** — set this `FALSE` in calibration loops, where thousands of
+#'   runs would otherwise hold that much each.
+#' @param quiet Logical scalar. `FALSE` (default) emits a `message()` at the end of each run saying
+#'   why the simulation stopped, and warns when it was censored by `check_final_size`. Set `TRUE` to
+#'   silence it. A censored run's final size measures the cap, not transmission, so any analysis of
+#'   final size must check `sim_info$hit_final_size_cap` first.
 #' @param Tg_shape_funeral Positive numeric. Shape of the Gamma outcome-to-funeral-infection delay
 #'   distribution.
 #' @param Tg_rate_funeral Positive numeric. Rate of the Gamma funeral-delay distribution (mean delay
@@ -287,6 +296,10 @@ branching_process_main <- function(
   presymptomatic_transmission = TRUE,
   check_presymptomatic = TRUE,              # estimate the presymptomatic share once and warn if large
   presymptomatic_warn_threshold = 0.1,      # share above which check_presymptomatic warns
+
+  ## Output control
+  return_contact_log = TRUE,                # FALSE skips building and accumulating the contact log
+  quiet = FALSE,                            # TRUE suppresses the end-of-run stop-reason message
 
   ## Natural history
   incubation_period,              # DESCRIPTION HERE
@@ -988,6 +1001,7 @@ branching_process_main <- function(
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      trace_coverage = trace_coverage,
+                                                                     return_contact_log = return_contact_log,
                                                                      presymptomatic_transmission = presymptomatic_transmission,
                                                                      prop_etu = prop_etu,
                                                                      etu_efficacy = etu_efficacy,
@@ -1019,6 +1033,7 @@ branching_process_main <- function(
                                                                   Tg_rate_hcw = Tg_rate_hcw,
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
                                                                   trace_coverage = trace_coverage,
+                                                                  return_contact_log = return_contact_log,
                                                                   presymptomatic_transmission = presymptomatic_transmission,
                                                                   ppe_coverage_hcw = ppe_coverage_hcw,
                                                                   ppe_efficacy = ppe_efficacy,
@@ -1067,6 +1082,7 @@ branching_process_main <- function(
                                                        Tg_shape_funeral = Tg_shape_funeral,
                                                        Tg_rate_funeral = Tg_rate_funeral,
                                                        trace_coverage = trace_coverage,
+                                                       return_contact_log = return_contact_log,
                                                        safe_funeral_efficacy = safe_funeral_efficacy,
                                                        obv_pep_enabled = obv_pep_enabled,
                                                        obv_pep_coverage = obv_pep_coverage,
@@ -1194,12 +1210,47 @@ branching_process_main <- function(
       v_offspring_generated[rows]           <- complete_offspring_df$offspring_generated
       n_filled <- n_filled + n_new
     }
-    if (nrow(combined_contact_log) > 0) {
+    if (return_contact_log && nrow(combined_contact_log) > 0) {
       contact_log_list[[length(contact_log_list) + 1L]] <- combined_contact_log
     }
 
     ## Deplete susceptibles
     susc <- susc - v_n_offspring[idx]
+  }
+
+  ############################################################################################
+  ### Why did the loop stop?
+  ###
+  ### Three exits, and they mean very different things for an analysis:
+  ###   "outbreak_ended"  every case was expanded -- the natural end, final size is real
+  ###   "final_size_cap"  we ran out of budget with cases still waiting to be expanded, so the
+  ###                     final size is CENSORED and measures the cap rather than transmission
+  ###   "susceptibles"    the susceptible pool was exhausted
+  ### A censored run silently looks like a controlled one if you only read the final size, so
+  ### the reason is surfaced in sim_info and (unless quiet) announced at the end of the run.
+  ############################################################################################
+  n_unexpanded <- sum(is.na(v_n_offspring))
+  stop_reason <- if (n_unexpanded == 0L) {
+    "outbreak_ended"
+  } else if (susc <= 0) {
+    "susceptibles"
+  } else {
+    "final_size_cap"
+  }
+  hit_final_size_cap <- identical(stop_reason, "final_size_cap")
+  if (!quiet) {
+    if (identical(stop_reason, "final_size_cap")) {
+      warning(sprintf(
+        paste0("Simulation stopped at the `check_final_size` cap (%d) with %d case(s) still ",
+               "unexpanded. The final size is CENSORED -- it measures the cap, not transmission. ",
+               "Raise `check_final_size`, or filter on `sim_info$hit_final_size_cap` before ",
+               "comparing final sizes across scenarios."),
+        check_final_size, n_unexpanded), call. = FALSE)
+    } else {
+      message(sprintf("Simulation ended: %s (%d cases).",
+                      if (identical(stop_reason, "susceptibles")) "susceptible pool exhausted"
+                      else "outbreak died out", n_filled))
+    }
   }
 
   ############################################################################################
@@ -1350,7 +1401,12 @@ branching_process_main <- function(
       baseline_risk_hcw     = baseline_risk_hcw,
       baseline_risk_funeral = baseline_risk_funeral,
       r0_target             = r0_target,
-      r0_solution           = r0_solution
+      r0_solution           = r0_solution,
+      ## Why the run stopped. `hit_final_size_cap = TRUE` means the final size is censored
+      ## by `check_final_size` and must not be compared across scenarios at face value.
+      stop_reason           = stop_reason,
+      hit_final_size_cap    = hit_final_size_cap,
+      n_unexpanded          = n_unexpanded
     )
   )
 

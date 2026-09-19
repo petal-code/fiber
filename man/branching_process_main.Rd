@@ -35,6 +35,8 @@ branching_process_main(
   presymptomatic_transmission = TRUE,
   check_presymptomatic = TRUE,
   presymptomatic_warn_threshold = 0.1,
+  return_contact_log = TRUE,
+  quiet = FALSE,
   incubation_period,
   onset_to_hospitalisation,
   hospitalisation_delay_factor = 1,
@@ -186,6 +188,17 @@ in large calibration runs. See \code{\link[=approx_presymptomatic_transmission]{
 
 \item{presymptomatic_warn_threshold}{Numeric in \verb{[0, 1]}. Presymptomatic share above which
 \code{check_presymptomatic} warns. Defaults to 0.1.}
+
+\item{return_contact_log}{Logical scalar. \code{TRUE} (default) returns the full contact log. \code{FALSE}
+skips building it per parent and accumulating it, and returns a 0-row frame. The log is roughly
+one row per contact, so at \code{check_final_size = 30000} with ~15 contacts per case it is around
+450,000 rows (~47 MB) \strong{per run} — set this \code{FALSE} in calibration loops, where thousands of
+runs would otherwise hold that much each.}
+
+\item{quiet}{Logical scalar. \code{FALSE} (default) emits a \code{message()} at the end of each run saying
+why the simulation stopped, and warns when it was censored by \code{check_final_size}. Set \code{TRUE} to
+silence it. A censored run's final size measures the cap, not transmission, so any analysis of
+final size must check \code{sim_info$hit_final_size_cap} first.}
 
 \item{incubation_period}{Function(n). Random generator returning n incubation-period draws
 (infection to symptom onset).}

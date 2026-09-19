@@ -42,6 +42,9 @@
 #'   (mean delay = shape / rate).
 #' @param trace_coverage Numeric in \code{[0,1]} or function(t). Programme-level contact
 #'   tracing coverage, multiplying each tier's \code{trace_prob}.
+#' @param return_contact_log Logical scalar. \code{FALSE} skips building the contact log for
+#'   this parent and returns an empty one, saving the per-parent data.frame construction. See
+#'   \code{\link{branching_process_main}} for why that matters at scale.
 #' @param safe_funeral_efficacy Numeric in \code{[0,1]}. Efficacy of a safe burial in
 #'   preventing transmission (1 = fully blocking, 0 = equivalent to an unsafe funeral). The
 #'   time-varying probability that a funeral is safe or unsafe is resolved upstream.
@@ -75,7 +78,8 @@ offspring_function_funeral <- function(
   Tg_rate_funeral = NULL,  # gamma rate parameter for the delay distribution
 
   ## Contact tracing
-  trace_coverage = 0,      # scalar/function(t): programme-level tracing coverage
+  trace_coverage = 0,
+  return_contact_log = TRUE,  # FALSE skips building the per-parent contact log
 
   ### efficacy of a safe funeral (thinning funeral offspring)
   safe_funeral_efficacy = NULL, ## efficacy of a safe burial in reducing transmission in a funeral setting
@@ -263,7 +267,7 @@ offspring_function_funeral <- function(
   trans_idx <- which(transmitted)
   if (length(trans_idx) == 0L) {
     out <- empty_offspring_dataframe()
-    attr(out, "contact_log") <- new_contact_log(
+    attr(out, "contact_log") <- if (!return_contact_log) empty_contact_log() else new_contact_log(
       parent_id             = parent_info$id,
       offspring_class       = contact_class,
       infection_location    = contact_settings,
@@ -340,7 +344,7 @@ offspring_function_funeral <- function(
   attr(offspring_df, "obv_pep_num_treated") <- obv_gate$num_treated
   attr(offspring_df, "obv_pep_prevented_info") <-
     extract_obv_prevented_info(pre_thinning, keep_infection, final_local)
-  attr(offspring_df, "contact_log") <- new_contact_log(
+  attr(offspring_df, "contact_log") <- if (!return_contact_log) empty_contact_log() else new_contact_log(
     parent_id             = parent_info$id,
     offspring_class       = contact_class,
     infection_location    = contact_settings,

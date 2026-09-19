@@ -46,6 +46,9 @@
 #'   pre-admission contact occurs in the hospital setting while the HCW is working.
 #' @param trace_coverage Numeric in \code{[0,1]} or function(t). Programme-level contact
 #'   tracing coverage, multiplying each tier's \code{trace_prob}.
+#' @param return_contact_log Logical scalar. \code{FALSE} skips building the contact log for
+#'   this parent and returns an empty one, saving the per-parent data.frame construction. See
+#'   \code{\link{branching_process_main}} for why that matters at scale.
 #' @param presymptomatic_transmission Logical scalar. \code{TRUE} (default) lets contacts occur
 #'   before the parent's symptom onset; \code{FALSE} truncates contact times to start at the end
 #'   of the parent's incubation period.
@@ -93,6 +96,7 @@ offspring_function_hcw <- function(
 
   ## Contact tracing
   trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
+  return_contact_log = TRUE,                # FALSE skips building the per-parent contact log
 
   ## Whether contacts can occur before the parent develops symptoms
   presymptomatic_transmission = TRUE,       # FALSE truncates contact times to start at symptom onset
@@ -307,7 +311,7 @@ offspring_function_hcw <- function(
   trans_idx <- which(transmitted)
   if (length(trans_idx) == 0L) {
     out <- empty_offspring_dataframe()
-    attr(out, "contact_log") <- new_contact_log(
+    attr(out, "contact_log") <- if (!return_contact_log) empty_contact_log() else new_contact_log(
       parent_id             = parent_info$id,
       offspring_class       = contact_class,
       infection_location    = contact_settings,
@@ -420,7 +424,7 @@ offspring_function_hcw <- function(
   attr(offspring_df, "obv_pep_num_treated") <- obv_gate$num_treated
   attr(offspring_df, "obv_pep_prevented_info") <-
     extract_obv_prevented_info(pre_thinning, keep_infection, final_local)
-  attr(offspring_df, "contact_log") <- new_contact_log(
+  attr(offspring_df, "contact_log") <- if (!return_contact_log) empty_contact_log() else new_contact_log(
     parent_id             = parent_info$id,
     offspring_class       = contact_class,
     infection_location    = contact_settings,
