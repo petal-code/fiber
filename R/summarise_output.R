@@ -209,8 +209,25 @@ summarise_output <- function(
   ## Risk-tier breakdown of realised cases. The tier mix among cases is risk-weighted
   ## relative to the tier mix among contacts, since higher-risk contacts are more likely
   ## to become cases.
+  ## table() on a character column sorts alphabetically, which scrambles the tiers
+  ## whenever they carry real names ("casual", "household", ...) rather than
+  ## numbered ones. Since the whole point of these breakdowns is that the numbers
+  ## should rise with risk, order the levels by the tier index instead.
+  tier_levels <- function(level, category) {
+    ok <- !is.na(level) & !is.na(category)
+    if (!any(ok)) return(character(0))
+    m <- unique(data.frame(l = level[ok], c = as.character(category[ok])))
+    m$c[order(m$l)]
+  }
+  tier_table <- function(level, category) {
+    lv <- tier_levels(level, category)
+    if (length(lv) == 0L) return(table(factor(character(0))))
+    table(factor(as.character(category), levels = lv), useNA = "no")
+  }
+
   cases_by_risk_tier <- if (!is.null(tdf$contact_risk_category)) {
-    table(tdf$contact_risk_category[subset_vector], useNA = "no")
+    tier_table(tdf$contact_risk_level[subset_vector],
+               tdf$contact_risk_category[subset_vector])
   } else NULL
 
   ##--------------------------------------------------------------
@@ -224,7 +241,8 @@ summarise_output <- function(
     n_contacts_traced   <- sum(contact_log$traced, na.rm = TRUE)
     n_contacts_infected <- sum(contact_log$record_type == "infection", na.rm = TRUE)
 
-    contacts_by_risk_tier <- table(contact_log$contact_risk_category, useNA = "no")
+    contacts_by_risk_tier <- tier_table(contact_log$contact_risk_level,
+                                        contact_log$contact_risk_category)
     contacts_by_location  <- table(contact_log$infection_location, useNA = "no")
 
     ## Realised per-tier attack rate: of the contacts in each tier, what share became

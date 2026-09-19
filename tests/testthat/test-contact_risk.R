@@ -624,6 +624,27 @@ test_that("summarise_output reports contact and tracing counts", {
   expect_equal(length(ar), 5L)
   expect_gt(ar[[5]], ar[[1]])
 
+  ## ... and the tiers must come back in TIER order, not alphabetical order.
+  ## table() on a character column sorts by name, which silently scrambles the
+  ## breakdown as soon as the tiers carry real labels, making a monotone attack
+  ## rate look non-monotone.
+  named <- make_contact_risk(
+    fractions     = rep(0.2, 5),
+    relative_risk = c(0.1, 0.2, 0.4, 0.7, 1.0),
+    trace_prob    = rep(0.5, 5),
+    ## Deliberately chosen so alphabetical order differs from risk order.
+    labels        = c("casual", "repeated", "community", "close", "household"))
+  out2 <- do.call(branching_process_main,
+                  bpm_args(contact_risk = named, trace_coverage = 0.8))
+  s3 <- summarise_output(out2$tdf, sim_info = out2$sim_info,
+                         contact_log = out2$contact_log)
+  expect_identical(names(s3$contacts_by_risk_tier), named$labels)
+  expect_identical(names(s3$attack_rate_by_risk_tier), named$labels)
+  expect_identical(names(s3$cases_by_risk_tier), named$labels)
+  ## Monotone in risk once the order is right.
+  expect_gt(s3$attack_rate_by_risk_tier[["household"]],
+            s3$attack_rate_by_risk_tier[["casual"]])
+
   ## Without the log the contact fields are NA but the call still works.
   s2 <- summarise_output(out$tdf, sim_info = out$sim_info)
   expect_true(is.na(s2$n_contacts_total))
