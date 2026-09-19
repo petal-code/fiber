@@ -40,6 +40,11 @@ bpm_args <- function(...) {
     prob_hcw_cond_funeral_hcw = 0.1, prob_hcw_cond_funeral_genPop = 0.05,
     population = 1e6, hcw_per_capita = 0.01,
     check_presymptomatic = FALSE,
+    ## These runs sit at a deliberately small cap, so nearly all of them end
+    ## censored. That is fine here -- none of these tests reads the final size --
+    ## but the cap warning would otherwise drown the suite and break every
+    ## expect_no_warning() that is really about something else.
+    quiet = TRUE,
     check_final_size = 300, seeding_cases = 5, seed = 1
   )
   utils::modifyList(args, list(...))
@@ -623,6 +628,50 @@ test_that("summarise_output reports contact and tracing counts", {
   s2 <- summarise_output(out$tdf, sim_info = out$sim_info)
   expect_true(is.na(s2$n_contacts_total))
   expect_equal(s2$n_cases_traced, s$n_cases_traced)
+})
+
+## --- stop reason and the contact-log switch ----------------------------
+
+test_that("a censored run is reported as such, and a finished one is not", {
+  ## A run that stops at the cap must be distinguishable from one that ended on
+  ## its own. Reading nrow(tdf) alone cannot tell them apart, which is the whole
+  ## reason these fields exist.
+  capped <- do.call(branching_process_main, bpm_args())
+  expect_identical(capped$sim_info$stop_reason, "final_size_cap")
+  expect_true(capped$sim_info$hit_final_size_cap)
+  expect_gt(capped$sim_info$n_unexpanded, 0)
+
+  ## Subcritical: baseline risk near zero, so the chains die out well short of
+  ## the cap and every case gets expanded.
+  ended <- do.call(branching_process_main,
+                   bpm_args(baseline_risk_genPop = 0.001,
+                            baseline_risk_funeral = 0.001, seeding_cases = 2))
+  expect_identical(ended$sim_info$stop_reason, "outbreak_ended")
+  expect_false(ended$sim_info$hit_final_size_cap)
+  expect_identical(ended$sim_info$n_unexpanded, 0L)
+})
+
+test_that("the censoring warning fires unless quiet, and quiet keeps the fields", {
+  expect_warning(do.call(branching_process_main, bpm_args(quiet = FALSE)),
+                 "CENSORED")
+  expect_no_warning(do.call(branching_process_main, bpm_args(quiet = TRUE)))
+  ## quiet silences the announcement, it does not stop the bookkeeping.
+  q <- do.call(branching_process_main, bpm_args(quiet = TRUE))
+  expect_true(q$sim_info$hit_final_size_cap)
+})
+
+test_that("return_contact_log = FALSE drops the log without touching the tree", {
+  ## The log is built from draws that have already happened, so switching it off
+  ## must not consume any randomness. If it did, every calibration run would
+  ## silently diverge from the equivalent diagnostic run.
+  with_log    <- do.call(branching_process_main, bpm_args(return_contact_log = TRUE))
+  without_log <- do.call(branching_process_main, bpm_args(return_contact_log = FALSE))
+
+  expect_identical(with_log$tdf, without_log$tdf)
+  expect_gt(nrow(with_log$contact_log), 0)
+  expect_equal(nrow(without_log$contact_log), 0)
+  ## Still a well-formed frame, so downstream code does not need a special case.
+  expect_identical(names(without_log$contact_log), names(with_log$contact_log))
 })
 
 ## --- presymptomatic transmission wiring --------------------------------

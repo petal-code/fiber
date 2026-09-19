@@ -137,6 +137,7 @@ bpm_args <- function(...) {
     population                    = 5000,
     hcw_per_capita                = 0.02,
     check_presymptomatic = FALSE,
+    quiet                = TRUE,   # these runs sit at a tiny cap; the censoring warning is expected
     check_final_size              = 200,
     seeding_cases                 = 3,
     seed                          = 1L

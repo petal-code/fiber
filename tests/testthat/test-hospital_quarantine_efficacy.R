@@ -189,6 +189,7 @@ test_that("branching_process_main errors when derived inputs are incomplete", {
       prob_hcw_cond_funeral_genPop  = 0.1,
       population                    = 1000,
       check_presymptomatic = FALSE,
+      quiet                = TRUE,   # these runs sit at a tiny cap; the censoring warning is expected
       check_final_size              = 50,
       seeding_cases                 = 1,
       seed                          = 1
