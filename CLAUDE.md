@@ -91,14 +91,18 @@ Single-type (genPop-dominant) approximation at t = 0, matching the ABC calibrati
 ```
 R0_direct  = mn_contacts_genPop  * baseline_risk_genPop  * rr_bar_genPop  * D
 R0_funeral = mn_contacts_funeral * baseline_risk_funeral * rr_bar_funeral * F
-D = 1 - hospital_quarantine_efficacy(0) * Q_g - isolation_efficacy * Q_iso
+D = 1 - hospital_quarantine_efficacy(0) * Q_g
 F = p_die_comm * (1 - safe_eff * (1 - p_unsafe_comm)) + p_die_hosp * (1 - safe_eff * (1 - p_unsafe_hosp))
 ```
 
-`Q_g` is the expected fraction of generation-time mass falling after admission; `Q_iso` the fraction
-between isolation onset and admission. The two windows are **disjoint**, so the terms are additive
-with no double counting. Contact overdispersion never enters R0 (thinning an NB leaves its mean
-unchanged), so superspreading can be dialled without disturbing the calibration.
+`Q_g` is the expected fraction of generation-time mass falling after admission. Contact
+overdispersion never enters R0 (thinning an NB leaves its mean unchanged), so superspreading can be
+dialled without disturbing the calibration.
+
+Both contact tracing and `presymptomatic_transmission = FALSE` raise `Q_g`: the first by admitting
+traced cases sooner, the second by removing the earliest generation-time mass. Because whether a case
+is traced depends on the tier it was infected in, the Monte Carlo draws tiers from the
+**case-weighted** distribution (`case_weights`), not the raw contact fractions.
 
 `compute_r0_invariants()` runs the Monte Carlo and returns only efficacy-**independent** quantities,
 so an ABC loop caches it once and recomputes the cheap closed-form `r0_direct_multiplier()` /
@@ -112,7 +116,7 @@ the achievable ceiling named.
 - **`complete_offspring_info()`** (`R/complete_offspring_info.R`) - Fills in offspring details: symptomatic status, hospitalization, death/recovery outcomes, delay times
 - **`helper_functions.R`** - Utilities including `rtrunc_gamma()`, probability calculations
 
-### Contact Tracing and Isolation
+### Contact Tracing
 
 Contact tracing is the channel by which the risk tiers drive the NPIs. Every contact is independently
 marked traced with probability `trace_coverage(t) * trace_prob[tier]` — a time-varying programme
@@ -120,22 +124,44 @@ coverage lever times a fixed per-tier traceability, following the coverage × ef
 throughout. Tracing is drawn for **every** contact, not just those that transmit, so the contact log
 carries the true programme denominator.
 
-Traced status travels with any contact that becomes a case. In `complete_offspring_info()` a traced,
-symptomatic case then:
+Traced status travels with any contact that becomes a case. In `complete_offspring_info()` a traced
+case is then:
 
-- enters **isolation** with probability `prob_isolate_given_traced(t)`, starting `onset_to_isolation()`
-  after symptom onset (default: at onset). Isolation thins that case's **pre-admission** transmission
-  by `isolation_efficacy` — for HCW parents this covers workplace as well as community contacts, since
-  an isolated HCW is off work. Isolation runs up to admission, where hospital quarantine takes over.
-- may be admitted more often (`prob_hospitalised_multiplier_traced`, capped at 1) and sooner
-  (`hospitalisation_delay_factor_traced`, an extra multiplier on the admission delay).
+- **admitted sooner**: `onset_to_hospitalisation_traced` is a flat onset-to-admission delay in days.
+  It **caps** rather than replaces each case's own drawn delay, so tracing can only bring an admission
+  forward, never push it back. `NULL` (default) means no effect.
+- **admitted more often**, via `prob_hospitalised_multiplier_traced` (capped at 1, default 1).
 
-All three default to no effect. Asymptomatic cases are not isolated: isolation triggers on symptom
-onset in a monitored contact, not on the contact event — a quarantine-all-traced-contacts policy
-would need a different trigger.
+Faster admission raises the *realised* hospitalisation rate on its own, independently of the
+multiplier, because admission is more likely to beat the community outcome.
 
-Note this is the model's **only** pre-admission transmission-reducing state; before it, everything
-between infection and admission was unthinned.
+`branching_process_main()` warns if `onset_to_hospitalisation_traced` is not clearly below the
+untraced delay distribution, since a value above it would silently make tracing a no-op.
+
+There is **no pre-admission isolation** in the model. The only transmission-reducing state a case can
+be in is post-admission hospital quarantine, so tracing acts purely by getting cases there faster.
+
+### Presymptomatic Transmission
+
+Contact times and incubation periods are drawn independently, so nothing stops a contact happening
+before the infector's symptom onset. The resulting presymptomatic share is **not a parameter** — it is
+an emergent consequence of the two distributions, and with plausible filovirus parameters runs from
+roughly a quarter to a half of all transmission.
+
+This caps what tracing can achieve, since faster admission only acts on post-onset transmission.
+
+- `approx_presymptomatic_transmission(args)` estimates the share once for a parameter set, per route.
+- `branching_process_main(check_presymptomatic = TRUE)` (the default) runs that estimate at the start
+  of a run and warns above `presymptomatic_warn_threshold` (default 0.1). It saves and restores the
+  random seed, so it never perturbs the trajectory. Set `FALSE` in large calibration runs.
+- `presymptomatic_transmission = FALSE` removes it, by truncating each parent's contact times to start
+  at the end of their incubation period. This is **exact truncation** (`rtrunc_gamma`'s lower bound),
+  equivalent to rejection sampling with unlimited retries but with no loop.
+
+The truncation applies to every parent, symptomatic or not: the incubation period is drawn for all
+cases and marks the start of infectiousness. Note it lengthens the realised generation time, because
+the distribution is being conditioned rather than reshaped — fitted `Tg_*` parameters mean something
+slightly different afterwards.
 
 ### Medical Countermeasures (MCMs)
 
@@ -200,9 +226,8 @@ Cases are tracked by where infection occurred: `community`, `hospital`, or `fune
 `branching_process_main()` returns `tdf`, `contact_log`, `prevented_completed` and `sim_info`.
 
 `tdf` is the transmission tree as before, plus the risk tier of the contact that produced each case
-(`contact_risk_level`, `contact_risk_category`), whether that contact was traced (`traced`), and the
-case's isolation state (`isolated`, `time_isolation_relative`, `time_isolation_absolute`). Seed cases
-have no tier and are never traced.
+(`contact_risk_level`, `contact_risk_category`) and whether that contact was traced (`traced`). Seed
+cases have no tier and are never traced.
 
 `contact_log` has one row per contact generated over the whole run — including contacts that never
 became infections. Columns: `parent`, `case_id` (joins to `tdf$id` for contacts that became cases, NA
@@ -216,8 +241,7 @@ anything tracing- or prophylaxis-related.
 used (solved from `r0_target` where applicable), and the R0 inversion diagnostics.
 
 `summarise_output()` takes an optional `contact_log` argument and then reports contact counts by tier
-and location, the realised per-tier attack rate, tracing/isolation counts, and the `blocked_by`
-breakdown.
+and location, the realised per-tier attack rate, tracing counts, and the `blocked_by` breakdown.
 
 ## Testing
 

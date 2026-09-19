@@ -1,6 +1,7 @@
 ## Tests for the contact-first transmission model: the risk-tier structure, the
 ## R0 approximation and its inversion, the contact log, and the contact-tracing /
-## isolation pathway that lets the risk tiers drive the NPIs.
+## tracing pathway that lets the risk tiers drive the NPIs, and the
+## presymptomatic-transmission diagnostic and switch.
 
 ## --- helpers -----------------------------------------------------------
 
@@ -38,6 +39,7 @@ bpm_args <- function(...) {
     safe_funeral_efficacy = 0.8,
     prob_hcw_cond_funeral_hcw = 0.1, prob_hcw_cond_funeral_genPop = 0.05,
     population = 1e6, hcw_per_capita = 0.01,
+    check_presymptomatic = FALSE,
     check_final_size = 300, seeding_cases = 5, seed = 1
   )
   utils::modifyList(args, list(...))
@@ -46,8 +48,7 @@ bpm_args <- function(...) {
 parent_genPop <- function(time_infection_absolute = 0,
                           time_to_hospitalisation = NA_real_,
                           time_to_outcome = 30,
-                          isolated = FALSE,
-                          time_isolation_relative = NA_real_) {
+                          incubation_period = 5) {
   data.frame(
     id                            = 1L,
     class                         = "genPop",
@@ -56,10 +57,10 @@ parent_genPop <- function(time_infection_absolute = 0,
     generation                    = 1L,
     time_infection_relative       = 0,
     time_infection_absolute       = time_infection_absolute,
-    incubation_period             = 5,
+    incubation_period             = incubation_period,
     symptomatic                   = TRUE,
-    time_symptom_onset_relative   = 5,
-    time_symptom_onset_absolute   = time_infection_absolute + 5,
+    time_symptom_onset_relative   = incubation_period,
+    time_symptom_onset_absolute   = time_infection_absolute + incubation_period,
     hospitalisation               = !is.na(time_to_hospitalisation),
     time_hospitalisation_relative = time_to_hospitalisation,
     time_hospitalisation_absolute = time_infection_absolute + time_to_hospitalisation,
@@ -68,8 +69,6 @@ parent_genPop <- function(time_infection_absolute = 0,
     time_outcome_relative         = time_to_outcome,
     time_outcome_absolute         = time_infection_absolute + time_to_outcome,
     funeral_safety                = "unsafe",
-    isolated                      = isolated,
-    time_isolation_relative       = time_isolation_relative,
     n_offspring                   = NA_integer_,
     offspring_generated           = FALSE,
     stringsAsFactors              = FALSE
@@ -196,22 +195,35 @@ test_that("an infeasible R0 target errors and names the achievable ceiling", {
   )
 })
 
-test_that("isolation reduces the direct multiplier D", {
-  args_no_trace <- bpm_args()
-  inv_no <- compute_r0_invariants(args_no_trace, n = 20000, seed = 9)
-  ## With no tracing there is no isolated generation-time mass at all.
-  expect_equal(inv_no$Q_iso, 0)
+test_that("faster admission for traced cases raises Q_g and lowers D", {
+  ## Admitting traced cases sooner pushes more of their generation-time mass past
+  ## admission, where hospital quarantine can act on it. So Q_g rises and the direct
+  ## multiplier D falls.
+  base <- bpm_args(contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.9),
+                   trace_coverage = 1)
+  inv_slow <- compute_r0_invariants(base, n = 30000, seed = 9)
+  inv_fast <- compute_r0_invariants(
+    utils::modifyList(base, list(onset_to_hospitalisation_traced = 0.5)),
+    n = 30000, seed = 9)
 
-  args_trace <- bpm_args(
-    contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.8),
-    trace_coverage = 1, prob_isolate_given_traced = 1
-  )
-  inv_tr <- compute_r0_invariants(args_trace, n = 20000, seed = 9)
-  expect_gt(inv_tr$Q_iso, 0)
+  expect_gt(inv_fast$Q_g, inv_slow$Q_g)
+  expect_lt(r0_direct_multiplier(inv_fast, 0.9, 0.3),
+            r0_direct_multiplier(inv_slow, 0.9, 0.3))
 
-  D_off <- r0_direct_multiplier(inv_tr, 0.9, 0.3, isolation_efficacy = 0)
-  D_on  <- r0_direct_multiplier(inv_tr, 0.9, 0.3, isolation_efficacy = 0.9)
-  expect_lt(D_on, D_off)
+  ## With no tracing the fast-admission delay has nothing to act on.
+  no_trace <- bpm_args(trace_coverage = 0, onset_to_hospitalisation_traced = 0.5)
+  expect_equal(compute_r0_invariants(no_trace, n = 30000, seed = 9)$p_traced, 0)
+})
+
+test_that("switching off presymptomatic transmission raises Q_g", {
+  ## Truncating contact times to start at symptom onset removes the earliest mass,
+  ## so a larger share of what remains falls after admission.
+  args <- bpm_args()
+  inv_with <- compute_r0_invariants(args, n = 30000, seed = 13)
+  inv_without <- compute_r0_invariants(
+    utils::modifyList(args, list(presymptomatic_transmission = FALSE)),
+    n = 30000, seed = 13)
+  expect_gt(inv_without$Q_g, inv_with$Q_g)
 })
 
 ## --- offspring-function behaviour --------------------------------------
@@ -286,40 +298,56 @@ test_that("a baseline risk that pushes the top tier above 1 is rejected", {
   )
 })
 
-test_that("isolation thins a genPop parent's post-isolation community transmission", {
-  run_iso <- function(eff, seed = 41) {
+test_that("presymptomatic_transmission = FALSE pushes all contacts past symptom onset", {
+  run <- function(presympt, seed = 41) {
     set.seed(seed)
-    nrow(offspring_function_genPop(
-      parent_info = parent_genPop(isolated = TRUE, time_isolation_relative = 0.001),
-      mn_contacts_genPop = 2000, overdisp_contacts_genPop = 1000,
+    o <- offspring_function_genPop(
+      parent_info = parent_genPop(incubation_period = 6, time_to_outcome = 30),
+      mn_contacts_genPop = 3000, overdisp_contacts_genPop = 1500,
       baseline_risk_genPop = 1, Tg_shape_genPop = 4, Tg_rate_genPop = 1,
-      isolation_efficacy = eff,
+      presymptomatic_transmission = presympt,
       prop_etu = 1, etu_efficacy = 0, general_hospital_quarantine_efficacy = 0,
       ppe_coverage_hcw = 0, ppe_efficacy = 0,
       prob_hcw_cond_genPop_comm = 0, prob_hcw_cond_genPop_hospital = 0
-    ))
+    )
+    attr(o, "contact_log")$time_contact_relative
   }
-  ## Isolating from (almost) time zero with full efficacy blocks essentially everything.
-  expect_equal(run_iso(1), 0)
-  expect_gt(run_iso(0), 1000)
-  ## Half efficacy should keep roughly half.
-  expect_lt(abs(run_iso(0.5) / run_iso(0) - 0.5), 0.1)
+  with_pre <- run(TRUE)
+  without  <- run(FALSE)
+
+  ## With it on, a substantial share of contacts land before onset at day 6.
+  expect_gt(mean(with_pre < 6), 0.3)
+  ## With it off, none do -- and the realised generation time is longer.
+  expect_equal(sum(without < 6), 0)
+  expect_gt(min(without), 6 - 1e-8)
+  expect_gt(mean(without), mean(with_pre))
+
+  ## The contact COUNT is unchanged: only the timing is conditioned, not the number.
+  expect_equal(length(with_pre), length(without))
 })
 
-test_that("a parent who is not isolated is unaffected by isolation_efficacy", {
-  run <- function(eff) {
-    set.seed(51)
-    nrow(offspring_function_genPop(
-      parent_info = parent_genPop(isolated = FALSE),
-      mn_contacts_genPop = 500, overdisp_contacts_genPop = 250,
-      baseline_risk_genPop = 1, Tg_shape_genPop = 4, Tg_rate_genPop = 1,
-      isolation_efficacy = eff,
-      prop_etu = 1, etu_efficacy = 0, general_hospital_quarantine_efficacy = 0,
-      ppe_coverage_hcw = 0, ppe_efficacy = 0,
-      prob_hcw_cond_genPop_comm = 0, prob_hcw_cond_genPop_hospital = 0
-    ))
-  }
-  expect_equal(run(0), run(1))
+test_that("approx_presymptomatic_transmission recovers a known share", {
+  ## Incubation fixed at 5 days and outcome far away, so the presymptomatic share is
+  ## almost exactly the generation-time CDF at day 5.
+  args <- bpm_args(
+    incubation_period        = function(n) rep(5, n),
+    onset_to_death           = function(n) rep(300, n),
+    onset_to_recovery        = function(n) rep(300, n),
+    prob_hospitalised_genPop = 0,
+    prob_hospitalised_hcw    = 0,
+    prob_symptomatic         = 1,
+    Tg_shape_genPop = 4, Tg_rate_genPop = 0.5
+  )
+  ps <- approx_presymptomatic_transmission(args, n = 20000, seed = 2)
+  expected <- pgamma(5, shape = 4, rate = 0.5) / pgamma(305, shape = 4, rate = 0.5)
+  expect_lt(abs(ps$genPop - expected), 0.01)
+  expect_equal(ps$mean_incubation, 5)
+
+  ## A longer incubation period leaves less transmission before onset.
+  later <- approx_presymptomatic_transmission(
+    utils::modifyList(args, list(incubation_period = function(n) rep(12, n))),
+    n = 20000, seed = 2)
+  expect_gt(later$genPop, ps$genPop)
 })
 
 test_that("tracing probability follows the tier and scales with coverage", {
@@ -370,7 +398,7 @@ test_that("the contact log accounts for every contact exactly once", {
   expect_true(all(is.na(log$case_id[!inf])))
   expect_false(anyNA(log$blocked_by[!inf]))
   expect_true(all(log$blocked_by[!inf] %in%
-                    c("no_transmission", "ppe_quarantine_isolation",
+                    c("no_transmission", "ppe_quarantine",
                       "safe_funeral", "obv_pep")))
 
   ## Case ids are unique and every one resolves to a row in the tree.
@@ -397,7 +425,7 @@ test_that("seed cases carry no risk tier and are never traced", {
 
 ## --- tracing drives the NPIs -------------------------------------------
 
-test_that("tracing plus isolation reduces onward transmission", {
+test_that("tracing plus fast admission reduces onward transmission", {
   ## Measured as realised offspring per expanded case rather than final size: these
   ## parameters are supercritical, so both arms run into `check_final_size` and the
   ## final size says more about the cap than about transmission.
@@ -411,31 +439,40 @@ test_that("tracing plus isolation reduces onward transmission", {
     }, numeric(1))
   }
   off <- mean_offspring(list(trace_coverage = 0))
-  on  <- mean_offspring(list(trace_coverage = 1, prob_isolate_given_traced = 0.9,
-                             isolation_efficacy = 0.9))
+  on  <- mean_offspring(list(trace_coverage = 1, onset_to_hospitalisation_traced = 0.5,
+                             etu_efficacy = 1, general_hospital_quarantine_efficacy = 1))
   expect_lt(mean(on), mean(off))
 })
 
-test_that("isolation is recorded only for traced, symptomatic cases", {
-  out <- do.call(branching_process_main,
-                 bpm_args(contact_risk = contact_risk_gradient(5, ratio = 4,
-                                                               trace_prob_range = 0.9),
-                          trace_coverage = 1, prob_isolate_given_traced = 1,
-                          isolation_efficacy = 0.8))
-  real <- out$tdf[!is.na(out$tdf$time_infection_absolute), ]
-  expect_gt(sum(real$isolated), 0)
-  ## Isolation implies traced and symptomatic, and carries a time.
-  expect_true(all(real$traced[real$isolated]))
-  expect_true(all(real$symptomatic[real$isolated]))
-  expect_false(anyNA(real$time_isolation_relative[real$isolated]))
-  expect_true(all(is.na(real$time_isolation_relative[!real$isolated])))
-  ## With prob_isolate_given_traced = 1, every traced symptomatic case isolates.
-  expect_true(all(real$isolated[real$traced & real$symptomatic]))
+test_that("the traced admission delay caps rather than replaces a case's own delay", {
+  args <- bpm_args(contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.9),
+                   trace_coverage = 1, onset_to_hospitalisation_traced = 1,
+                   check_final_size = 600)
+  out <- do.call(branching_process_main, args)
+  real <- out$tdf[!is.na(out$tdf$time_infection_absolute) & out$tdf$hospitalisation, ]
+  delay <- real$time_hospitalisation_relative - real$incubation_period
+
+  ## No traced case waits longer than the cap ...
+  expect_lte(max(delay[real$traced]), 1 + 1e-8)
+  ## ... and some are admitted sooner than it, because the cap never slows anyone down.
+  expect_true(any(delay[real$traced] < 1 - 1e-8))
+})
+
+test_that("a traced delay above the untraced distribution warns and does nothing", {
+  ## onset_to_hospitalisation here has mean 4 days, so a 20-day traced delay can never
+  ## bind. That is almost certainly a mistake, so it must warn rather than silently
+  ## produce a no-op tracing scenario.
+  expect_warning(
+    do.call(branching_process_main,
+            bpm_args(contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.9),
+                     trace_coverage = 1, onset_to_hospitalisation_traced = 20)),
+    "not clearly below"
+  )
 })
 
 test_that("tracing can accelerate admission for traced cases", {
   args <- bpm_args(contact_risk = contact_risk_gradient(5, ratio = 4, trace_prob_range = 0.9),
-                   trace_coverage = 1, hospitalisation_delay_factor_traced = 0.2,
+                   trace_coverage = 1, onset_to_hospitalisation_traced = 0.5,
                    check_final_size = 600)
   out <- do.call(branching_process_main, args)
   real <- out$tdf[!is.na(out$tdf$time_infection_absolute) & out$tdf$hospitalisation, ]
@@ -506,15 +543,14 @@ test_that("summarise_output reports contact and tracing counts", {
   out <- do.call(branching_process_main,
                  bpm_args(contact_risk = contact_risk_gradient(5, ratio = 5,
                                                                trace_prob_range = c(0.2, 0.9)),
-                          trace_coverage = 0.8, prob_isolate_given_traced = 0.5,
-                          isolation_efficacy = 0.7))
+                          trace_coverage = 0.8, onset_to_hospitalisation_traced = 1))
   s <- summarise_output(out$tdf, sim_info = out$sim_info, contact_log = out$contact_log)
 
   expect_equal(s$n_contacts_total, nrow(out$contact_log))
   expect_equal(s$n_contacts_infected, sum(out$contact_log$record_type == "infection"))
   expect_gt(s$contacts_per_case, 1)
   expect_gt(s$n_cases_traced, 0)
-  expect_true(s$n_cases_isolated <= s$n_cases_traced)
+  expect_lte(s$n_cases_traced, s$n_cases_total)
 
   ## The per-tier attack rate must increase with the tier's relative risk.
   ar <- s$attack_rate_by_risk_tier
@@ -525,4 +561,61 @@ test_that("summarise_output reports contact and tracing counts", {
   s2 <- summarise_output(out$tdf, sim_info = out$sim_info)
   expect_true(is.na(s2$n_contacts_total))
   expect_equal(s2$n_cases_traced, s$n_cases_traced)
+})
+
+## --- presymptomatic transmission wiring --------------------------------
+
+test_that("branching_process_main warns when presymptomatic transmission is substantial", {
+  ## The default test parameters have a mean incubation of 8 days and a mean generation
+  ## time of 8 days, so around half of transmission precedes symptoms. That is exactly
+  ## the case the check exists to surface.
+  expect_warning(
+    do.call(branching_process_main, bpm_args(check_presymptomatic = TRUE)),
+    "before the infector develops symptoms"
+  )
+  ## Silent when the share is below the threshold ...
+  expect_no_warning(
+    do.call(branching_process_main,
+            bpm_args(check_presymptomatic = TRUE, presymptomatic_warn_threshold = 0.99))
+  )
+  ## ... when the check is switched off ...
+  expect_no_warning(do.call(branching_process_main, bpm_args(check_presymptomatic = FALSE)))
+  ## ... and when presymptomatic transmission has been removed outright.
+  expect_no_warning(
+    do.call(branching_process_main,
+            bpm_args(check_presymptomatic = TRUE, presymptomatic_transmission = FALSE))
+  )
+})
+
+test_that("the presymptomatic check does not perturb the simulated trajectory", {
+  ## The check draws from the user's delay distributions, so it must save and restore
+  ## the random seed. Otherwise every downstream draw would shift and a scenario would
+  ## silently change depending on whether diagnostics were switched on.
+  quiet <- do.call(branching_process_main, bpm_args(check_presymptomatic = FALSE))
+  loud  <- suppressWarnings(
+    do.call(branching_process_main, bpm_args(check_presymptomatic = TRUE)))
+  expect_identical(quiet$tdf, loud$tdf)
+})
+
+test_that("removing presymptomatic transmission reduces final size", {
+  ## Transmission that would have happened before onset is not redistributed -- it is
+  ## pushed later, into the window where admission and quarantine can act on it. With
+  ## quarantine switched on, that means fewer secondary cases.
+  final <- function(presympt, seeds = 1:8) {
+    vapply(seeds, function(s) {
+      o <- do.call(branching_process_main,
+                   bpm_args(seed = s, presymptomatic_transmission = presympt,
+                            prob_hospitalised_genPop = 0.9, prob_hospitalised_hcw = 0.9,
+                            etu_efficacy = 1, general_hospital_quarantine_efficacy = 1,
+                            prop_etu = 1))
+      done <- o$tdf[!is.na(o$tdf$time_infection_absolute) & o$tdf$offspring_generated, ]
+      mean(done$n_offspring)
+    }, numeric(1))
+  }
+  expect_lt(mean(final(FALSE)), mean(final(TRUE)))
+})
+
+test_that("presymptomatic_transmission must be a single logical", {
+  expect_error(do.call(branching_process_main, bpm_args(presymptomatic_transmission = "no")),
+               "single logical")
 })

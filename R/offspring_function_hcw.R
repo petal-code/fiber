@@ -13,12 +13,9 @@
 #' transmits with probability \code{baseline_risk_hcw(t) * relative_risk[tier]} resolved at
 #' that contact's own calendar time.
 #'
-#' Contacts that transmit are thinned by four multiplicatively-combined protective layers,
+#' Contacts that transmit are thinned by three multiplicatively-combined protective layers,
 #' each applied only where relevant:
 #' \itemize{
-#'   \item **Isolation**: all pre-admission events (community *and* workplace) at or after
-#'         the parent's isolation time -- an isolated HCW has withdrawn from work as well as
-#'         from the community.
 #'   \item **Source PPE** worn by the still-working HCW parent: all pre-admission hospital
 #'         events, any recipient class.
 #'   \item **Receiver PPE** worn by HCW recipients: all hospital events with an HCW
@@ -26,12 +23,15 @@
 #'   \item **Hospital quarantine**: all post-admission hospital events.
 #' }
 #'
+#' Setting \code{presymptomatic_transmission = FALSE} truncates contact times to start at the
+#' end of the parent's incubation period; see \code{\link{offspring_function_genPop}}.
+#'
 #' Every contact is independently marked as traced, with probability
 #' \code{trace_coverage(t) * trace_prob[tier]}; traced status travels with contacts that
 #' become cases.
 #'
-#' @param parent_info One-row data.frame/list containing parent infection, hospitalisation,
-#'   isolation and outcome times.
+#' @param parent_info One-row data.frame/list containing parent infection, incubation,
+#'   hospitalisation and outcome times.
 #' @param mn_contacts_hcw Positive numeric or function(t). Mean of the Negative Binomial
 #'   contact distribution for HCW parents, resolved at the parent's absolute infection time.
 #' @param overdisp_contacts_hcw Positive numeric. Negative Binomial \code{size} of the
@@ -46,8 +46,9 @@
 #'   pre-admission contact occurs in the hospital setting while the HCW is working.
 #' @param trace_coverage Numeric in \code{[0,1]} or function(t). Programme-level contact
 #'   tracing coverage, multiplying each tier's \code{trace_prob}.
-#' @param isolation_efficacy Numeric in \code{[0,1]} (fixed scalar). Reduction in
-#'   pre-admission transmission once an isolated parent has entered isolation.
+#' @param presymptomatic_transmission Logical scalar. \code{TRUE} (default) lets contacts occur
+#'   before the parent's symptom onset; \code{FALSE} truncates contact times to start at the end
+#'   of the parent's incubation period.
 #' @param ppe_coverage_hcw Numeric in \code{[0,1]} or function(t). Coverage: probability that
 #'   an HCW (source or receiver) has PPE. Each PPE layer thins by
 #'   \code{ppe_coverage_hcw(t) * ppe_efficacy}.
@@ -90,9 +91,11 @@ offspring_function_hcw <- function(
   ## Setting model for HCWs
   prob_hospital_cond_hcw_preAdm = NULL,     # probability that a pre-admission contact occurs in the hospital (whilst HCW is working)
 
-  ## Contact tracing and pre-admission isolation
+  ## Contact tracing
   trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
-  isolation_efficacy = 0,                   # scalar: reduction in pre-admission transmission while isolated
+
+  ## Whether contacts can occur before the parent develops symptoms
+  presymptomatic_transmission = TRUE,       # FALSE truncates contact times to start at symptom onset
 
   ## PPE and post-admission quarantine
   ppe_coverage_hcw = NULL,                  # scalar or function(t): coverage/probability that an HCW (source or receiver) has PPE
@@ -175,8 +178,7 @@ offspring_function_hcw <- function(
   parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
   parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
   parent_time_infection_absolute = parent_info$time_infection_absolute       # absolute calendar time of parent infection
-  parent_isolated = isTRUE(parent_info$isolated)                             # whether the parent entered pre-admission isolation
-  parent_time_to_isolation = parent_info$time_isolation_relative             # if isolated, when isolation began (relative to infection)
+  parent_incubation_period = parent_info$incubation_period                   # infection -> symptom onset; start of infectiousness when presymptomatic transmission is off
 
   #########################################################################################
   ## Checks to make sure function inputs are correctly specified
@@ -239,7 +241,17 @@ offspring_function_hcw <- function(
   validate_probability_scalar(etu_efficacy, "etu_efficacy")
   validate_probability_scalar(general_hospital_quarantine_efficacy, "general_hospital_quarantine_efficacy")
   validate_probability_or_time_varying(trace_coverage, "trace_coverage")
-  validate_probability_scalar(isolation_efficacy, "isolation_efficacy")
+  if (!is.logical(presymptomatic_transmission) || length(presymptomatic_transmission) != 1L ||
+      is.na(presymptomatic_transmission)) {
+    stop("`presymptomatic_transmission` must be a single logical value.", call. = FALSE)
+  }
+  if (!presymptomatic_transmission &&
+      (is.null(parent_incubation_period) || length(parent_incubation_period) != 1L ||
+       !is.numeric(parent_incubation_period) || is.na(parent_incubation_period) ||
+       parent_incubation_period < 0)) {
+    stop("`parent_info$incubation_period` must be a single non-negative numeric value when `presymptomatic_transmission = FALSE`.",
+         call. = FALSE)
+  }
 
   ########################################################################################################
   ## Generating contacts, contact times, settings, classes and risk tiers
@@ -254,9 +266,12 @@ offspring_function_hcw <- function(
     return(empty_offspring_dataframe())
   }
 
-  # Step 2: Generate the time of each contact from the generation time (truncated at outcome)
+  # Step 2: Generate the time of each contact from the generation time (truncated at outcome).
+  #         With presymptomatic transmission switched off the lower bound moves from the
+  #         parent's infection to their symptom onset; see offspring_function_genPop.
+  gt_lower <- if (isTRUE(presymptomatic_transmission)) 0 else parent_incubation_period
   contact_times <- rtrunc_gamma(n = num_contacts,
-                                lower = 0,
+                                lower = gt_lower,
                                 upper = parent_time_to_outcome,
                                 Tg_shape = Tg_shape_hcw,
                                 Tg_rate = Tg_rate_hcw)
@@ -305,7 +320,7 @@ offspring_function_hcw <- function(
       transmitted           = transmitted,
       kept                  = rep(FALSE, num_contacts),
       realised              = rep(FALSE, num_contacts),
-      intervention_label    = "ppe_quarantine_isolation"
+      intervention_label    = "ppe_quarantine"
     )
     return(out)
   }
@@ -318,26 +333,10 @@ offspring_function_hcw <- function(
 
   # Step 7: Compute per-event keep probability under the protective layers
   #         (Swiss-cheese multiplicative), each applied only where it is relevant.
-  #   - Isolation: all PRE-admission events (community and workplace alike) at or after the
-  #     parent's isolation time. An isolated HCW is off work as well as out of circulation.
   #   - Source PPE (worn by the still-working HCW parent): all PRE-admission hospital events.
   #   - Receiver PPE (worn by HCW recipients): all hospital events with an HCW recipient.
   #   - Hospital quarantine: all POST-admission hospital events.
   p_keep_infection <- rep(1, length(infection_times))
-
-  t_iso <- if (parent_isolated && !is.null(parent_time_to_isolation) &&
-               length(parent_time_to_isolation) == 1L &&
-               is.numeric(parent_time_to_isolation) && !is.na(parent_time_to_isolation)) {
-    parent_time_to_isolation
-  } else {
-    Inf
-  }
-  if (is.finite(t_iso) && isolation_efficacy > 0) {
-    isolated_events <- infection_pre_admission & infection_times >= t_iso
-    if (any(isolated_events)) {
-      p_keep_infection[isolated_events] <- p_keep_infection[isolated_events] * (1 - isolation_efficacy)
-    }
-  }
 
   hospital_idx <- which(infection_settings == "hospital")
   if (length(hospital_idx) > 0) {
@@ -434,7 +433,7 @@ offspring_function_hcw <- function(
     transmitted           = transmitted,
     kept                  = kept_full,
     realised              = realised_full,
-    intervention_label    = "ppe_quarantine_isolation"
+    intervention_label    = "ppe_quarantine"
   )
 
   return(offspring_df)

@@ -251,6 +251,7 @@ bpm_args <- function(...) {
     prob_hcw_cond_funeral_genPop  = 0.05,
     population                    = 5000,
     hcw_per_capita                = 0.02,
+    check_presymptomatic = FALSE,
     check_final_size              = 50,
     seeding_cases                 = 2,
     seed                          = 1L

@@ -8,8 +8,8 @@
 ##     baseline_risk(t) * relative_risk[l]
 ##
 ## resolved at that contact's own calendar time. Contacts that transmit then pass
-## through the intervention layers (PPE, hospital quarantine, isolation, safe
-## burial) exactly as before.
+## through the intervention layers (PPE, hospital quarantine, safe burial)
+## exactly as before.
 ##
 ## Because each contact's tier is drawn independently, a contact's marginal
 ## transmission probability is `baseline_risk * mean_relative_risk` whatever tier
@@ -29,7 +29,7 @@
 ##
 ## Risk tiers also carry a per-tier contact-tracing probability, which is the
 ## route by which they drive the non-pharmaceutical interventions: a traced case
-## may be isolated before admission, and may be admitted sooner or more often.
+## is admitted sooner, and optionally more often.
 
 #' Define a contact risk-tier structure
 #'

@@ -76,6 +76,7 @@ run_sim <- function(seed = 1L, check_final_size = 30000L, population = 1e6, ...)
     prob_hcw_cond_funeral_genPop  = 0.05,
     population                    = population,
     hcw_per_capita                = 0.02,
+    check_presymptomatic = FALSE,
     check_final_size              = check_final_size,
     seeding_cases                 = 3,
     seed                          = seed

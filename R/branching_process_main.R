@@ -68,16 +68,29 @@
 #' @param r0_solve_n,r0_solve_seed Monte-Carlo settings for the R0 inversion.
 #' @param trace_coverage Numeric in `[0, 1]` or function(t). Programme-level contact tracing
 #'   coverage, multiplying each risk tier's `trace_prob`. Defaults to 0 (no tracing).
-#' @param prob_isolate_given_traced Numeric in `[0, 1]` or function(t). Probability a traced,
-#'   symptomatic case enters isolation. Defaults to 0.
-#' @param onset_to_isolation Function(n) or NULL. Delay from symptom onset to entering isolation.
-#'   NULL (default) means isolation begins at symptom onset.
-#' @param isolation_efficacy Numeric in `[0, 1]`. Reduction in an isolated case's pre-admission
-#'   transmission. Defaults to 0.
+#' @param onset_to_hospitalisation_traced Non-negative numeric or function(t), or NULL. Flat
+#'   onset-to-admission delay, in days, for cases that were traced. It *caps* rather than replaces
+#'   each traced case's own drawn delay, so tracing can only bring an admission forward, never
+#'   push it back. `NULL` (default) means tracing does not change admission timing. A warning is
+#'   raised if this is not comfortably below the untraced delay distribution, since a value above
+#'   it would silently do nothing.
 #' @param prob_hospitalised_multiplier_traced Positive numeric or function(t). Multiplier on
-#'   P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect).
-#' @param hospitalisation_delay_factor_traced Positive numeric or function(t). Extra multiplier on
-#'   the onset-to-admission delay for traced cases. Defaults to 1 (no effect).
+#'   P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect). Note
+#'   that faster admission raises the *realised* hospitalisation rate on its own, independently of
+#'   this multiplier, because admission is more likely to beat the community outcome.
+#' @param presymptomatic_transmission Logical scalar. `TRUE` (default) allows contacts to occur
+#'   before the infector develops symptoms — the model's natural behaviour, since contact times and
+#'   incubation periods are drawn independently. `FALSE` truncates each parent's contact times to
+#'   start at the end of their incubation period, removing presymptomatic transmission entirely.
+#'   Applies to every parent, symptomatic or not. Note this lengthens the realised generation time,
+#'   because the generation-time distribution is being conditioned rather than reshaped.
+#' @param check_presymptomatic Logical scalar. If `TRUE` (default) and presymptomatic transmission
+#'   is allowed, estimate its share once at the start of the run and warn when it exceeds
+#'   `presymptomatic_warn_threshold`. The estimate uses its own RNG draws and restores the random
+#'   seed afterwards, so it never perturbs the simulated trajectory. Set `FALSE` to skip the cost
+#'   in large calibration runs. See [approx_presymptomatic_transmission()].
+#' @param presymptomatic_warn_threshold Numeric in `[0, 1]`. Presymptomatic share above which
+#'   `check_presymptomatic` warns. Defaults to 0.1.
 #' @param Tg_shape_funeral Positive numeric. Shape of the Gamma outcome-to-funeral-infection delay
 #'   distribution.
 #' @param Tg_rate_funeral Positive numeric. Rate of the Gamma funeral-delay distribution (mean delay
@@ -192,8 +205,7 @@
 #'       `hcw_total`, `hcw_infected`, `hcw_remaining`, and `obv_pep_num_treated`.
 #'       Each case also records the risk tier of the contact that produced it
 #'       (`contact_risk_level`, `contact_risk_category`), whether that contact was
-#'       traced (`traced`), and whether the case entered pre-admission isolation
-#'       (`isolated`, `time_isolation_relative`, `time_isolation_absolute`).}
+#'       traced (`traced`).}
 #'     \item{`contact_log`}{Every contact generated over the run, one row each --
 #'       including the contacts that never became infections. Columns: `parent`,
 #'       `case_id` (the `tdf` id for contacts that became cases, `NA` otherwise),
@@ -257,14 +269,18 @@ branching_process_main <- function(
   r0_solve_n = 50000,                       # Monte-Carlo draws for the R0 inversion
   r0_solve_seed = NULL,                     # optional seed for the R0 inversion
 
-  ## Contact tracing and pre-admission isolation. Tracing probability is tier-specific (it
-  ## lives in the contact risk structure), so the risk tiers drive these NPIs.
+  ## Contact tracing. The probability of being traced is tier-specific (it lives in the
+  ## contact risk structure), so the risk tiers drive these NPIs. A traced case is admitted
+  ## sooner, and optionally more often.
   trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
-  prob_isolate_given_traced = 0,            # scalar/function(t): P(isolates | traced and symptomatic)
-  onset_to_isolation = NULL,                # function(n): delay from symptom onset to isolation (NULL = isolate at onset)
-  isolation_efficacy = 0,                   # scalar: reduction in pre-admission transmission while isolated
+  onset_to_hospitalisation_traced = NULL,   # scalar/function(t): flat onset-to-admission delay for traced cases (caps their own); NULL = no effect
   prob_hospitalised_multiplier_traced = 1,  # scalar/function(t): multiplier on P(hospitalised | symptomatic) for traced cases
-  hospitalisation_delay_factor_traced = 1,  # scalar/function(t): extra multiplier on admission delay for traced cases
+
+  ## Presymptomatic transmission. TRUE (the model's natural behaviour) lets contacts happen
+  ## before the infector's symptom onset; FALSE truncates contact times to start at onset.
+  presymptomatic_transmission = TRUE,
+  check_presymptomatic = TRUE,              # estimate the presymptomatic share once and warn if large
+  presymptomatic_warn_threshold = 0.1,      # share above which check_presymptomatic warns
 
   ## Natural history
   incubation_period,              # DESCRIPTION HERE
@@ -397,7 +413,6 @@ branching_process_main <- function(
   validate_scalar_probability(etu_efficacy, "etu_efficacy")
   validate_scalar_probability(general_hospital_quarantine_efficacy,
                               "general_hospital_quarantine_efficacy")
-  validate_scalar_probability(isolation_efficacy, "isolation_efficacy")
 
   ##################################################################
   ### Step 1a: Resolve the contact risk structures and, optionally,
@@ -441,15 +456,13 @@ branching_process_main <- function(
       prop_etu                     = prop_etu,
       etu_efficacy                 = etu_efficacy,
       general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
-      isolation_efficacy           = isolation_efficacy,
       safe_funeral_efficacy        = safe_funeral_efficacy,
       p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
       p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
       trace_coverage               = trace_coverage,
-      prob_isolate_given_traced    = prob_isolate_given_traced,
-      onset_to_isolation           = onset_to_isolation,
       prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
-      hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced
+      onset_to_hospitalisation_traced     = onset_to_hospitalisation_traced,
+      presymptomatic_transmission         = presymptomatic_transmission
     )
     r0_solution <- solve_baseline_risk_for_r0(
       R0   = r0_target,
@@ -530,7 +543,6 @@ branching_process_main <- function(
     obv_pep_coverage          = obv_pep_coverage,
     obv_pep_adherence             = obv_pep_adherence,
     trace_coverage                = trace_coverage,
-    prob_isolate_given_traced     = prob_isolate_given_traced,
     baseline_risk_genPop          = baseline_risk_genPop,
     baseline_risk_hcw             = baseline_risk_hcw,
     baseline_risk_funeral         = baseline_risk_funeral
@@ -548,7 +560,8 @@ branching_process_main <- function(
       mn_contacts_hcw              = mn_contacts_hcw,
       mn_contacts_funeral          = mn_contacts_funeral,
       prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
-      hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced
+      onset_to_hospitalisation_traced     = onset_to_hospitalisation_traced,
+      presymptomatic_transmission         = presymptomatic_transmission
     )
   )
   sanity_grid <- build_sanity_grid(grid_inputs)
@@ -569,11 +582,12 @@ branching_process_main <- function(
   check_positive_on_grid(mn_contacts_hcw,     sanity_grid, "mn_contacts_hcw")
   check_positive_on_grid(mn_contacts_funeral, sanity_grid, "mn_contacts_funeral")
 
-  ## Traced-case multipliers are strictly positive (they scale a probability and a delay).
+  ## The traced-case hospitalisation multiplier is strictly positive (it scales a probability).
   check_positive_on_grid(prob_hospitalised_multiplier_traced, sanity_grid,
                          "prob_hospitalised_multiplier_traced")
-  check_positive_on_grid(hospitalisation_delay_factor_traced, sanity_grid,
-                         "hospitalisation_delay_factor_traced")
+  ## The traced admission delay may legitimately be zero (same-day admission).
+  check_nonneg_on_grid(onset_to_hospitalisation_traced, sanity_grid,
+                       "onset_to_hospitalisation_traced")
 
   ## The highest-risk tier's per-contact transmission probability is
   ## baseline_risk(t) * max_relative_risk and must stay a valid probability across the
@@ -596,8 +610,89 @@ branching_process_main <- function(
   check_top_tier_probability(baseline_risk_hcw,     risk_hcw,     "baseline_risk_hcw")
   check_top_tier_probability(baseline_risk_funeral, risk_funeral, "baseline_risk_funeral")
 
-  if (!is.null(onset_to_isolation) && !is.function(onset_to_isolation)) {
-    stop("`onset_to_isolation` must be NULL or a function(n) returning n delay draws.", call. = FALSE)
+  if (!is.logical(presymptomatic_transmission) || length(presymptomatic_transmission) != 1L ||
+      is.na(presymptomatic_transmission)) {
+    stop("`presymptomatic_transmission` must be a single logical value.", call. = FALSE)
+  }
+
+  ####################################################################################
+  ### Step 1c: Pre-flight checks that need their own random draws
+  ###
+  ### Both of these sample from the user's delay distributions, which would consume
+  ### RNG and shift every subsequent draw in the simulation. The whole block therefore
+  ### saves the random seed on entry and restores it on exit, so the checks are
+  ### invisible to the simulated trajectory.
+  ###
+  ###  (a) `onset_to_hospitalisation_traced` is only meaningful if it is actually faster
+  ###      than the untraced pathway. A value at or above the untraced delay distribution
+  ###      would silently do nothing (the delay is applied as a cap), so warn rather than
+  ###      let a scenario quietly have no tracing effect.
+  ###  (b) Estimate how much transmission happens before symptom onset, and warn if it is
+  ###      substantial. This matters because fast admission of traced cases can only act on
+  ###      post-onset transmission, so a large presymptomatic share caps what tracing can
+  ###      ever achieve.
+  ####################################################################################
+  presymptomatic_share <- NULL
+  run_preflight <- (!is.null(onset_to_hospitalisation_traced)) ||
+    (isTRUE(check_presymptomatic) && isTRUE(presymptomatic_transmission))
+
+  if (run_preflight) {
+    seed_existed <- exists(".Random.seed", envir = globalenv())
+    saved_seed <- if (seed_existed) get(".Random.seed", envir = globalenv()) else NULL
+
+    if (!is.null(onset_to_hospitalisation_traced)) {
+      untraced_delays <- onset_to_hospitalisation(n = 2000) *
+        resolve_positive_time_varying(hospitalisation_delay_factor, 0,
+                                      "hospitalisation_delay_factor")
+      traced_delay_0 <- resolve_time_varying(onset_to_hospitalisation_traced,
+                                             sanity_grid, "onset_to_hospitalisation_traced")
+      q25 <- stats::quantile(untraced_delays, 0.25, names = FALSE)
+      if (max(traced_delay_0) >= q25) {
+        warning(sprintf(
+          paste0("`onset_to_hospitalisation_traced` (max %.2f days) is not clearly below the untraced ",
+                 "onset-to-admission delay (25th percentile %.2f days, median %.2f). Because the traced ",
+                 "delay caps rather than replaces each case's own delay, tracing will have little or no ",
+                 "effect on admission timing. Set a smaller value."),
+          max(traced_delay_0), q25, stats::median(untraced_delays)
+        ), call. = FALSE)
+      }
+    }
+
+    if (isTRUE(check_presymptomatic) && isTRUE(presymptomatic_transmission)) {
+      ps <- approx_presymptomatic_transmission(
+        list(
+          incubation_period        = incubation_period,
+          prob_symptomatic         = prob_symptomatic,
+          prob_death_comm          = prob_death_comm,
+          prob_death_hosp          = prob_death_hosp,
+          prob_hospitalised_genPop = prob_hospitalised_genPop,
+          prob_hospitalised_hcw    = prob_hospitalised_hcw,
+          onset_to_death           = onset_to_death,
+          onset_to_recovery        = onset_to_recovery,
+          onset_to_hospitalisation = onset_to_hospitalisation,
+          hospitalisation_delay_factor = hospitalisation_delay_factor,
+          hospitalisation_to_death     = hospitalisation_to_death,
+          hospitalisation_to_recovery  = hospitalisation_to_recovery,
+          Tg_shape_genPop = Tg_shape_genPop, Tg_rate_genPop = Tg_rate_genPop,
+          Tg_shape_hcw    = Tg_shape_hcw,    Tg_rate_hcw    = Tg_rate_hcw
+        ),
+        n = 10000
+      )
+      presymptomatic_share <- ps
+      if (ps$genPop > presymptomatic_warn_threshold) {
+        warning(sprintf(
+          paste0("About %.0f%% of genPop transmission in this parameter set happens before the ",
+                 "infector develops symptoms (HCW: %.0f%%). Contact tracing and admission-based ",
+                 "interventions can only act on the remainder. Set `presymptomatic_transmission = FALSE` ",
+                 "to remove it, or `check_presymptomatic = FALSE` to silence this."),
+          100 * ps$genPop, 100 * ps$hcw
+        ), call. = FALSE)
+      }
+    }
+
+    if (seed_existed) {
+      assign(".Random.seed", saved_seed, envir = globalenv())
+    }
   }
 
   ## obv_pep_dpc is non-negative (0 = same-day treatment is a meaningful boundary value).
@@ -677,9 +772,6 @@ branching_process_main <- function(
     contact_risk_level             = NA_integer_,          # risk tier of the contact that produced this case
     contact_risk_category          = NA_character_,        # its label
     traced                         = rep(FALSE, max_cases),# was that contact reached by contact tracing?
-    isolated                       = rep(FALSE, max_cases),# did this case enter pre-admission isolation?
-    time_isolation_relative        = NA_real_,
-    time_isolation_absolute        = NA_real_,
     obv_pep_eligible               = rep(FALSE, max_cases),
     obv_pep_received               = rep(FALSE, max_cases),
     obv_pep_adherent               = rep(FALSE, max_cases),
@@ -749,9 +841,6 @@ branching_process_main <- function(
     contact_risk_level             = NA_integer_,
     contact_risk_category          = NA_character_,
     traced                         = rep(FALSE, seeding_cases),
-    isolated                       = rep(FALSE, seeding_cases),
-    time_isolation_relative        = NA_real_,
-    time_isolation_absolute        = NA_real_,
     obv_pep_eligible               = rep(FALSE, seeding_cases),
     obv_pep_received               = rep(FALSE, seeding_cases),
     obv_pep_adherent               = rep(FALSE, seeding_cases),
@@ -793,9 +882,6 @@ branching_process_main <- function(
   v_contact_risk_level            <- tdf$contact_risk_level
   v_contact_risk_category         <- tdf$contact_risk_category
   v_traced                        <- tdf$traced
-  v_isolated                      <- tdf$isolated
-  v_time_isolation_relative       <- tdf$time_isolation_relative
-  v_time_isolation_absolute       <- tdf$time_isolation_absolute
   v_obv_pep_eligible              <- tdf$obv_pep_eligible
   v_obv_pep_received              <- tdf$obv_pep_received
   v_obv_pep_adherent              <- tdf$obv_pep_adherent
@@ -851,9 +937,6 @@ branching_process_main <- function(
       contact_risk_level            = v_contact_risk_level[idx],
       contact_risk_category         = v_contact_risk_category[idx],
       traced                        = v_traced[idx],
-      isolated                      = v_isolated[idx],
-      time_isolation_relative       = v_time_isolation_relative[idx],
-      time_isolation_absolute       = v_time_isolation_absolute[idx],
       obv_pep_eligible              = v_obv_pep_eligible[idx],
       obv_pep_received              = v_obv_pep_received[idx],
       obv_pep_adherent              = v_obv_pep_adherent[idx],
@@ -886,7 +969,7 @@ branching_process_main <- function(
                                                                      Tg_shape_genPop = Tg_shape_genPop,
                                                                      Tg_rate_genPop = Tg_rate_genPop,
                                                                      trace_coverage = trace_coverage,
-                                                                     isolation_efficacy = isolation_efficacy,
+                                                                     presymptomatic_transmission = presymptomatic_transmission,
                                                                      prop_etu = prop_etu,
                                                                      etu_efficacy = etu_efficacy,
                                                                      general_hospital_quarantine_efficacy = general_hospital_quarantine_efficacy,
@@ -917,7 +1000,7 @@ branching_process_main <- function(
                                                                   Tg_rate_hcw = Tg_rate_hcw,
                                                                   prob_hospital_cond_hcw_preAdm = prob_hospital_cond_hcw_preAdm,
                                                                   trace_coverage = trace_coverage,
-                                                                  isolation_efficacy = isolation_efficacy,
+                                                                  presymptomatic_transmission = presymptomatic_transmission,
                                                                   ppe_coverage_hcw = ppe_coverage_hcw,
                                                                   ppe_efficacy = ppe_efficacy,
                                                                   prop_etu = prop_etu,
@@ -1023,10 +1106,8 @@ branching_process_main <- function(
                                                        p_unsafe_funeral_hosp_hcw = p_unsafe_funeral_hosp_hcw,
                                                        p_unsafe_funeral_comm_genPop = p_unsafe_funeral_comm_genPop,
                                                        p_unsafe_funeral_hosp_genPop = p_unsafe_funeral_hosp_genPop,
-                                                       prob_isolate_given_traced = prob_isolate_given_traced,
-                                                       onset_to_isolation = onset_to_isolation,
+                                                       onset_to_hospitalisation_traced = onset_to_hospitalisation_traced,
                                                        prob_hospitalised_multiplier_traced = prob_hospitalised_multiplier_traced,
-                                                       hospitalisation_delay_factor_traced = hospitalisation_delay_factor_traced,
                                                        incubation_period = incubation_period,
                                                        onset_to_hospitalisation = onset_to_hospitalisation,
                                                        hospitalisation_delay_factor = hospitalisation_delay_factor,
@@ -1085,9 +1166,6 @@ branching_process_main <- function(
       v_contact_risk_level[rows]            <- complete_offspring_df$contact_risk_level
       v_contact_risk_category[rows]         <- complete_offspring_df$contact_risk_category
       v_traced[rows]                        <- complete_offspring_df$traced
-      v_isolated[rows]                      <- complete_offspring_df$isolated
-      v_time_isolation_relative[rows]       <- complete_offspring_df$time_isolation_relative
-      v_time_isolation_absolute[rows]       <- complete_offspring_df$time_isolation_absolute
       v_obv_pep_eligible[rows]              <- complete_offspring_df$obv_pep_eligible
       v_obv_pep_received[rows]              <- complete_offspring_df$obv_pep_received
       v_obv_pep_adherent[rows]              <- complete_offspring_df$obv_pep_adherent
@@ -1134,9 +1212,6 @@ branching_process_main <- function(
     contact_risk_level            = v_contact_risk_level,
     contact_risk_category         = v_contact_risk_category,
     traced                        = v_traced,
-    isolated                      = v_isolated,
-    time_isolation_relative       = v_time_isolation_relative,
-    time_isolation_absolute       = v_time_isolation_absolute,
     obv_pep_eligible              = v_obv_pep_eligible,
     obv_pep_received              = v_obv_pep_received,
     obv_pep_adherent              = v_obv_pep_adherent,

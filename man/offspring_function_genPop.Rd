@@ -13,7 +13,7 @@ offspring_function_genPop(
   Tg_shape_genPop = NULL,
   Tg_rate_genPop = NULL,
   trace_coverage = 0,
-  isolation_efficacy = 0,
+  presymptomatic_transmission = TRUE,
   prop_etu = NULL,
   etu_efficacy = NULL,
   general_hospital_quarantine_efficacy = NULL,
@@ -33,8 +33,8 @@ offspring_function_genPop(
 )
 }
 \arguments{
-\item{parent_info}{One-row data.frame/list containing parent infection, hospitalisation,
-isolation and outcome times.}
+\item{parent_info}{One-row data.frame/list containing parent infection, incubation,
+hospitalisation and outcome times.}
 
 \item{mn_contacts_genPop}{Positive numeric or function(t). Mean of the Negative Binomial
 contact distribution for genPop parents, resolved at the parent's absolute infection
@@ -63,8 +63,11 @@ for genPop parents (before truncation). Mean GT is \code{Tg_shape_genPop / Tg_ra
 \item{trace_coverage}{Numeric in \code{[0,1]} or function(t). Programme-level contact
 tracing coverage, multiplying each tier's \code{trace_prob}. Defaults to 0.}
 
-\item{isolation_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Reduction in
-pre-admission transmission once an isolated parent has entered isolation. Defaults to 0.}
+\item{presymptomatic_transmission}{Logical scalar. \code{TRUE} (default) lets contacts occur
+at any point between the parent's infection and outcome, including before symptom onset.
+\code{FALSE} truncates contact times to start at the end of the parent's incubation period,
+so no transmission happens before onset. Applied to every parent, symptomatic or not: the
+incubation period is drawn for all cases and marks the start of infectiousness.}
 
 \item{prop_etu}{Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases
 managed in ETU/ETC care at time \code{t} (the time-varying coverage lever for hospital
@@ -144,19 +147,22 @@ A contact then transmits with probability
 calendar time. Contacts that transmit are thinned further by the intervention layers,
 which compose multiplicatively (Swiss-cheese):
 \itemize{
-\item \strong{Isolation} applies to pre-admission (community) events occurring at or
-after the parent's isolation time, thinning them by \code{isolation_efficacy}.
 \item \strong{Hospital quarantine} applies to every post-admission (hospital) event, at
 the \code{prop_etu(t)}-weighted mixture of the fixed ETU and general-hospital
 efficacies.
 \item \strong{PPE} additionally protects HCW recipients in the hospital setting, thinning
 by \code{ppe_coverage_hcw(t) * ppe_efficacy}.
 }
-Isolation runs up to admission and quarantine takes over from admission, so the two
-windows are disjoint.
+
+By default contacts can occur before the parent develops symptoms, because contact times
+and the incubation period are drawn independently. Setting
+\code{presymptomatic_transmission = FALSE} truncates the generation-time distribution to
+start at the end of the parent's incubation period, removing that transmission. See
+\code{\link{approx_presymptomatic_transmission}} for how much of it a given parameter set
+produces.
 
 Every contact is independently marked as traced or not, with probability
 \code{trace_coverage(t) * trace_prob[tier]}. Traced status travels with any contact
-that becomes a case and drives its isolation and hospitalisation downstream (see
+that becomes a case and speeds up its hospital admission downstream (see
 \code{\link{complete_offspring_info}}).
 }

@@ -29,11 +29,11 @@ branching_process_main(
   r0_solve_n = 50000,
   r0_solve_seed = NULL,
   trace_coverage = 0,
-  prob_isolate_given_traced = 0,
-  onset_to_isolation = NULL,
-  isolation_efficacy = 0,
+  onset_to_hospitalisation_traced = NULL,
   prob_hospitalised_multiplier_traced = 1,
-  hospitalisation_delay_factor_traced = 1,
+  presymptomatic_transmission = TRUE,
+  check_presymptomatic = TRUE,
+  presymptomatic_warn_threshold = 0.1,
   incubation_period,
   onset_to_hospitalisation,
   hospitalisation_delay_factor = 1,
@@ -152,20 +152,33 @@ Only used when \code{r0_target} is supplied. Defaults to 0.}
 \item{trace_coverage}{Numeric in \verb{[0, 1]} or function(t). Programme-level contact tracing
 coverage, multiplying each risk tier's \code{trace_prob}. Defaults to 0 (no tracing).}
 
-\item{prob_isolate_given_traced}{Numeric in \verb{[0, 1]} or function(t). Probability a traced,
-symptomatic case enters isolation. Defaults to 0.}
-
-\item{onset_to_isolation}{Function(n) or NULL. Delay from symptom onset to entering isolation.
-NULL (default) means isolation begins at symptom onset.}
-
-\item{isolation_efficacy}{Numeric in \verb{[0, 1]}. Reduction in an isolated case's pre-admission
-transmission. Defaults to 0.}
+\item{onset_to_hospitalisation_traced}{Non-negative numeric or function(t), or NULL. Flat
+onset-to-admission delay, in days, for cases that were traced. It \emph{caps} rather than replaces
+each traced case's own drawn delay, so tracing can only bring an admission forward, never
+push it back. \code{NULL} (default) means tracing does not change admission timing. A warning is
+raised if this is not comfortably below the untraced delay distribution, since a value above
+it would silently do nothing.}
 
 \item{prob_hospitalised_multiplier_traced}{Positive numeric or function(t). Multiplier on
-P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect).}
+P(hospitalised | symptomatic) for traced cases, capped at 1. Defaults to 1 (no effect). Note
+that faster admission raises the \emph{realised} hospitalisation rate on its own, independently of
+this multiplier, because admission is more likely to beat the community outcome.}
 
-\item{hospitalisation_delay_factor_traced}{Positive numeric or function(t). Extra multiplier on
-the onset-to-admission delay for traced cases. Defaults to 1 (no effect).}
+\item{presymptomatic_transmission}{Logical scalar. \code{TRUE} (default) allows contacts to occur
+before the infector develops symptoms — the model's natural behaviour, since contact times and
+incubation periods are drawn independently. \code{FALSE} truncates each parent's contact times to
+start at the end of their incubation period, removing presymptomatic transmission entirely.
+Applies to every parent, symptomatic or not. Note this lengthens the realised generation time,
+because the generation-time distribution is being conditioned rather than reshaped.}
+
+\item{check_presymptomatic}{Logical scalar. If \code{TRUE} (default) and presymptomatic transmission
+is allowed, estimate its share once at the start of the run and warn when it exceeds
+\code{presymptomatic_warn_threshold}. The estimate uses its own RNG draws and restores the random
+seed afterwards, so it never perturbs the simulated trajectory. Set \code{FALSE} to skip the cost
+in large calibration runs. See \code{\link[=approx_presymptomatic_transmission]{approx_presymptomatic_transmission()}}.}
+
+\item{presymptomatic_warn_threshold}{Numeric in \verb{[0, 1]}. Presymptomatic share above which
+\code{check_presymptomatic} warns. Defaults to 0.1.}
 
 \item{incubation_period}{Function(n). Random generator returning n incubation-period draws
 (infection to symptom onset).}
@@ -322,8 +335,7 @@ infection, ordered by absolute infection time. Carries attributes
 \code{hcw_total}, \code{hcw_infected}, \code{hcw_remaining}, and \code{obv_pep_num_treated}.
 Each case also records the risk tier of the contact that produced it
 (\code{contact_risk_level}, \code{contact_risk_category}), whether that contact was
-traced (\code{traced}), and whether the case entered pre-admission isolation
-(\code{isolated}, \code{time_isolation_relative}, \code{time_isolation_absolute}).}
+traced (\code{traced}).}
 \item{\code{contact_log}}{Every contact generated over the run, one row each --
 including the contacts that never became infections. Columns: \code{parent},
 \code{case_id} (the \code{tdf} id for contacts that became cases, \code{NA} otherwise),

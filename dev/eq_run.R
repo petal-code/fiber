@@ -51,13 +51,16 @@ scenarios <- list(
   susc_limited = list(check_final_size = 2000L, population = 1500,
                       mn_contacts_genPop = 3, mn_contacts_hcw = 3,
                       mn_contacts_funeral = 3),
-  ## Contact-first specific: a graded risk structure with tracing and isolation on.
+  ## Contact-first specific: a graded risk structure with tracing and fast admission on.
   traced       = list(check_final_size = 1500L, mn_contacts_genPop = 3,
                       mn_contacts_hcw = 3, mn_contacts_funeral = 3,
                       contact_risk = contact_risk_gradient(5, ratio = 8,
                                                            trace_prob_range = c(0.1, 0.9)),
-                      trace_coverage = 0.8, prob_isolate_given_traced = 0.7,
-                      isolation_efficacy = 0.8)
+                      trace_coverage = 0.8, onset_to_hospitalisation_traced = 1),
+  ## And the same set with presymptomatic transmission switched off.
+  no_presympt  = list(check_final_size = 1500L, mn_contacts_genPop = 3,
+                      mn_contacts_hcw = 3, mn_contacts_funeral = 3,
+                      presymptomatic_transmission = FALSE)
 )
 seeds <- 1:6
 

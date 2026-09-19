@@ -15,24 +15,27 @@
 #' calendar time. Contacts that transmit are thinned further by the intervention layers,
 #' which compose multiplicatively (Swiss-cheese):
 #' \itemize{
-#'   \item **Isolation** applies to pre-admission (community) events occurring at or
-#'         after the parent's isolation time, thinning them by \code{isolation_efficacy}.
 #'   \item **Hospital quarantine** applies to every post-admission (hospital) event, at
 #'         the \code{prop_etu(t)}-weighted mixture of the fixed ETU and general-hospital
 #'         efficacies.
 #'   \item **PPE** additionally protects HCW recipients in the hospital setting, thinning
 #'         by \code{ppe_coverage_hcw(t) * ppe_efficacy}.
 #' }
-#' Isolation runs up to admission and quarantine takes over from admission, so the two
-#' windows are disjoint.
+#'
+#' By default contacts can occur before the parent develops symptoms, because contact times
+#' and the incubation period are drawn independently. Setting
+#' \code{presymptomatic_transmission = FALSE} truncates the generation-time distribution to
+#' start at the end of the parent's incubation period, removing that transmission. See
+#' \code{\link{approx_presymptomatic_transmission}} for how much of it a given parameter set
+#' produces.
 #'
 #' Every contact is independently marked as traced or not, with probability
 #' \code{trace_coverage(t) * trace_prob[tier]}. Traced status travels with any contact
-#' that becomes a case and drives its isolation and hospitalisation downstream (see
+#' that becomes a case and speeds up its hospital admission downstream (see
 #' \code{\link{complete_offspring_info}}).
 #'
-#' @param parent_info One-row data.frame/list containing parent infection, hospitalisation,
-#'   isolation and outcome times.
+#' @param parent_info One-row data.frame/list containing parent infection, incubation,
+#'   hospitalisation and outcome times.
 #' @param mn_contacts_genPop Positive numeric or function(t). Mean of the Negative Binomial
 #'   contact distribution for genPop parents, resolved at the parent's absolute infection
 #'   time.
@@ -53,8 +56,11 @@
 #'   for genPop parents (before truncation). Mean GT is \code{Tg_shape_genPop / Tg_rate_genPop}.
 #' @param trace_coverage Numeric in \code{[0,1]} or function(t). Programme-level contact
 #'   tracing coverage, multiplying each tier's \code{trace_prob}. Defaults to 0.
-#' @param isolation_efficacy Numeric in \code{[0,1]} (fixed scalar). Reduction in
-#'   pre-admission transmission once an isolated parent has entered isolation. Defaults to 0.
+#' @param presymptomatic_transmission Logical scalar. \code{TRUE} (default) lets contacts occur
+#'   at any point between the parent's infection and outcome, including before symptom onset.
+#'   \code{FALSE} truncates contact times to start at the end of the parent's incubation period,
+#'   so no transmission happens before onset. Applied to every parent, symptomatic or not: the
+#'   incubation period is drawn for all cases and marks the start of infectiousness.
 #' @param prop_etu Numeric in \code{[0,1]} or function(t). Proportion of hospitalised cases
 #'   managed in ETU/ETC care at time \code{t} (the time-varying coverage lever for hospital
 #'   quarantine). The post-admission hospital quarantine efficacy is the mixture
@@ -115,9 +121,11 @@ offspring_function_genPop <- function(
   Tg_shape_genPop = NULL,                   # gamma shape parameter for Tg distribution for general population
   Tg_rate_genPop = NULL,                    # gamma rate parameter for Tg distribution for general population
 
-  ## Contact tracing and pre-admission isolation
+  ## Contact tracing
   trace_coverage = 0,                       # scalar/function(t): programme-level tracing coverage
-  isolation_efficacy = 0,                   # scalar: reduction in pre-admission transmission while isolated
+
+  ## Whether contacts can occur before the parent develops symptoms
+  presymptomatic_transmission = TRUE,       # FALSE truncates contact times to start at symptom onset
 
   ## Post-admission quarantine
   prop_etu = NULL,                          # scalar/function(t): proportion of hospitalised cases in ETU/ETC care
@@ -202,8 +210,7 @@ offspring_function_genPop <- function(
   parent_time_to_hospitalisation = parent_info$time_hospitalisation_relative # if parent is hospitalised, the time of hospitalisation (relative to infection)
   parent_time_to_outcome = parent_info$time_outcome_relative                 # the time when the parent dies/recovers (relative to time of infection)
   parent_time_infection_absolute = parent_info$time_infection_absolute       # absolute calendar time of parent infection
-  parent_isolated = isTRUE(parent_info$isolated)                             # whether the parent entered pre-admission isolation
-  parent_time_to_isolation = parent_info$time_isolation_relative             # if isolated, when isolation began (relative to infection)
+  parent_incubation_period = parent_info$incubation_period                   # infection -> symptom onset; start of infectiousness when presymptomatic transmission is off
 
   #########################################################################################
   ## Checks to make sure function inputs are correctly specified
@@ -266,7 +273,17 @@ offspring_function_genPop <- function(
   validate_probability_or_time_varying(ppe_coverage_hcw, "ppe_coverage_hcw")
   validate_probability_scalar(ppe_efficacy, "ppe_efficacy")
   validate_probability_or_time_varying(trace_coverage, "trace_coverage")
-  validate_probability_scalar(isolation_efficacy, "isolation_efficacy")
+  if (!is.logical(presymptomatic_transmission) || length(presymptomatic_transmission) != 1L ||
+      is.na(presymptomatic_transmission)) {
+    stop("`presymptomatic_transmission` must be a single logical value.", call. = FALSE)
+  }
+  if (!presymptomatic_transmission &&
+      (is.null(parent_incubation_period) || length(parent_incubation_period) != 1L ||
+       !is.numeric(parent_incubation_period) || is.na(parent_incubation_period) ||
+       parent_incubation_period < 0)) {
+    stop("`parent_info$incubation_period` must be a single non-negative numeric value when `presymptomatic_transmission = FALSE`.",
+         call. = FALSE)
+  }
 
   ########################################################################################################
   ## Generating contacts, contact times, settings, classes and risk tiers
@@ -283,9 +300,15 @@ offspring_function_genPop <- function(
     return(empty_offspring_dataframe())
   }
 
-  # Step 2: Generate the time of each contact from the generation time distribution
+  # Step 2: Generate the time of each contact from the generation time distribution.
+  #         With presymptomatic transmission switched off the distribution is truncated to
+  #         start at the parent's symptom onset instead of their infection. This is exact
+  #         truncation -- identical to rejection sampling with unlimited retries, but with
+  #         no loop. It lengthens the realised generation time, since the distribution is
+  #         being conditioned rather than reshaped.
+  gt_lower <- if (isTRUE(presymptomatic_transmission)) 0 else parent_incubation_period
   contact_times <- rtrunc_gamma(n = num_contacts,
-                                lower = 0,
+                                lower = gt_lower,
                                 upper = parent_time_to_outcome,
                                 Tg_shape = Tg_shape_genPop,
                                 Tg_rate = Tg_rate_genPop)
@@ -337,7 +360,7 @@ offspring_function_genPop <- function(
       transmitted           = transmitted,
       kept                  = rep(FALSE, num_contacts),
       realised              = rep(FALSE, num_contacts),
-      intervention_label    = "ppe_quarantine_isolation"
+      intervention_label    = "ppe_quarantine"
     )
     return(out)
   }
@@ -349,30 +372,10 @@ offspring_function_genPop <- function(
 
   # Step 7: Compute per-event keep probability under the protective layers
   #         (Swiss-cheese multiplicative), each applied only where it is relevant.
-  #   - Isolation: applies to pre-admission (community) events at or after the parent's
-  #     isolation time. An isolated parent has been traced and has withdrawn from
-  #     circulation, so a fraction isolation_efficacy of their remaining community
-  #     transmission is prevented.
   #   - Hospital quarantine: applies to every post-admission (hospital) event, as the
   #     prop_etu(t) mixture of the fixed ETU and general-hospital efficacies.
   #   - PPE: applies only to HCW recipients in the hospital setting.
-  #   Isolation runs up to admission and quarantine from admission, so the two windows
-  #   are disjoint and cannot both apply to the same event.
   p_keep_infection <- rep(1, length(infection_times))
-
-  t_iso <- if (parent_isolated && !is.null(parent_time_to_isolation) &&
-               length(parent_time_to_isolation) == 1L &&
-               is.numeric(parent_time_to_isolation) && !is.na(parent_time_to_isolation)) {
-    parent_time_to_isolation
-  } else {
-    Inf
-  }
-  if (is.finite(t_iso) && isolation_efficacy > 0) {
-    isolated_events <- infection_settings == "community" & infection_times >= t_iso
-    if (any(isolated_events)) {
-      p_keep_infection[isolated_events] <- p_keep_infection[isolated_events] * (1 - isolation_efficacy)
-    }
-  }
 
   hospital_idx <- which(infection_settings == "hospital")
   if (length(hospital_idx) > 0) {
@@ -459,7 +462,7 @@ offspring_function_genPop <- function(
     transmitted           = transmitted,
     kept                  = kept_full,
     realised              = realised_full,
-    intervention_label    = "ppe_quarantine_isolation"
+    intervention_label    = "ppe_quarantine"
   )
   return(offspring_df)
 }

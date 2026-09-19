@@ -4,30 +4,22 @@
 \alias{r0_direct_multiplier}
 \title{Direct-transmission multiplier D}
 \usage{
-r0_direct_multiplier(
-  inv,
-  etu_efficacy,
-  general_hospital_quarantine_efficacy,
-  isolation_efficacy = 0
-)
+r0_direct_multiplier(inv, etu_efficacy, general_hospital_quarantine_efficacy)
 }
 \arguments{
 \item{inv}{Invariants from \code{\link{compute_r0_invariants}}.}
 
 \item{etu_efficacy, general_hospital_quarantine_efficacy}{Fixed scalar
 post-admission quarantine efficacies.}
-
-\item{isolation_efficacy}{Fixed scalar efficacy of pre-admission isolation.
-Defaults to 0.}
 }
 \value{
 A single numeric multiplier.
 }
 \description{
 The fraction of a genPop case's would-be transmission that survives the
-pre-admission isolation and post-admission quarantine layers:
-\deqn{D = 1 - hq(0) \, Q_g - \mathrm{isolation\_efficacy} \, Q_{iso}}
-The two windows are disjoint, so the terms are additive. PPE does not enter:
+post-admission quarantine layer:
+\deqn{D = 1 - hq(0) \, Q_g}
+PPE does not enter:
 it only thins HCW recipients, and this is the genPop-dominant single-type
 approximation.
 }

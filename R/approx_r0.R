@@ -4,19 +4,19 @@
 ##
 ## This is the in-package version of the approximation already used for ABC
 ## calibration, updated for the contact-first parameterisation and extended to
-## cover pre-admission isolation. The structure is unchanged:
+## cover contact tracing. The structure is unchanged:
 ##
 ##     R0_direct  = mn_contacts_genPop  * baseline_risk_genPop  * rr_bar_genPop  * D
 ##     R0_funeral = mn_contacts_funeral * baseline_risk_funeral * rr_bar_funeral * F
 ##
 ## where rr_bar is a risk structure's mean relative risk, D is the direct
-## multiplier (what survives hospital quarantine and isolation) and F is the
+## multiplier (what survives hospital quarantine) and F is the
 ## funeral multiplier (chance of dying, times what survives safe burial).
 ##
 ## As before, the expensive Monte-Carlo quantities are EFFICACY-INDEPENDENT and
 ## are computed once by compute_r0_invariants(); D and F are then cheap
 ## closed-form functions of the invariants plus a particle's efficacies, so an
-## ABC loop varying etu_efficacy / isolation_efficacy / safe_funeral_efficacy
+## ABC loop varying etu_efficacy / safe_funeral_efficacy
 ## re-evaluates only the closed forms.
 ##
 ## Conditioning convention (unchanged): prob_death_comm and prob_hospitalised_*
@@ -44,35 +44,29 @@
 #' mirroring \code{\link{complete_offspring_info}}, to obtain the generation-time
 #' mass fractions that the intervention efficacies act on. None of the returned
 #' quantities depend on the conditional efficacies (ETU, general hospital,
-#' isolation, safe burial), so they can be cached per scenario and reused across
+#' safe burial), so they can be cached per scenario and reused across
 #' every particle of a calibration.
 #'
-#' Two generation-time mass fractions are computed:
-#' \describe{
-#'   \item{\code{Q_g}}{the expected fraction of a case's generation-time mass
-#'     falling \emph{after} hospital admission, which hospital quarantine acts on.}
-#'   \item{\code{Q_iso}}{the expected fraction falling between isolation onset and
-#'     admission (or, for cases never admitted, between isolation onset and their
-#'     outcome), which isolation acts on.}
-#' }
-#' The two windows are disjoint by construction -- isolation runs up to admission
-#' and quarantine takes over from admission -- so their effects on the direct
-#' multiplier are additive with no double counting.
+#' \code{Q_g} is the expected fraction of a case's generation-time mass falling
+#' \emph{after} hospital admission, which is what hospital quarantine acts on.
 #'
-#' Whether a case is isolated depends on whether it was traced, which depends on
-#' the risk tier of the contact that infected it. Cases over-represent high-risk
-#' tiers, so the tier is drawn from the structure's \code{case_weights} (which are
-#' proportional to \code{fractions * relative_risk}) rather than from the raw
-#' contact fractions.
+#' Contact tracing enters through admission timing: a traced case is admitted a flat
+#' \code{onset_to_hospitalisation_traced} days after onset (capping its own delay), and
+#' may be admitted more often. Both raise \code{Q_g}, since more of the case's
+#' generation-time mass falls after admission where quarantine can act on it.
+#'
+#' Whether a case is traced depends on the risk tier of the contact that infected it.
+#' Cases over-represent high-risk tiers, so the tier is drawn from the structure's
+#' \code{case_weights} (which are proportional to \code{fractions * relative_risk})
+#' rather than from the raw contact fractions.
 #'
 #' @param args Named list of arguments as passed to
 #'   \code{\link{branching_process_main}}.
 #' @param n Integer, number of Monte-Carlo draws. Defaults to 50000.
 #' @param seed Optional integer seed.
 #'
-#' @return A named list of invariants: \code{Q_g}, \code{Q_iso},
-#'   \code{p_realised_hosp}, \code{p_traced}, \code{p_isolated},
-#'   \code{p_die_comm}, \code{p_die_hosp}, and the resolved \code{t = 0} inputs
+#' @return A named list of invariants: \code{Q_g}, \code{p_realised_hosp},
+#'   \code{p_traced}, \code{p_die_comm}, \code{p_die_hosp}, and the resolved \code{t = 0} inputs
 #'   \code{prop_etu_0}, \code{p_uf_cgp_0}, \code{p_uf_hgp_0}.
 #' @export
 compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
@@ -86,19 +80,14 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
   hdf <- .at_t0(args$hospitalisation_delay_factor)
   if (is.null(hdf)) hdf <- 1.0
 
-  ## Contact tracing / isolation inputs. All default to "off" so a scenario with
-  ## no tracing reproduces the previous approximation exactly (Q_iso = 0).
+  ## Contact tracing inputs. All default to "off" so a scenario with no tracing
+  ## reproduces the untraced approximation exactly.
   risk <- as_contact_risk(args$contact_risk_genPop, args$contact_risk, "contact_risk_genPop")
   trace_cov_0 <- .at_t0(args$trace_coverage)
   if (is.null(trace_cov_0)) trace_cov_0 <- 0
-  p_iso_given_traced <- .at_t0(args$prob_isolate_given_traced)
-  if (is.null(p_iso_given_traced)) p_iso_given_traced <- 0
-  onset_to_isolation <- args$onset_to_isolation
-  if (is.null(onset_to_isolation)) onset_to_isolation <- function(n) rep(0, n)
   hosp_mult_traced <- .at_t0(args$prob_hospitalised_multiplier_traced)
   if (is.null(hosp_mult_traced)) hosp_mult_traced <- 1
-  hdf_traced <- .at_t0(args$hospitalisation_delay_factor_traced)
-  if (is.null(hdf_traced)) hdf_traced <- 1
+  traced_delay <- .at_t0(args$onset_to_hospitalisation_traced)
 
   ## 1. Incubation period
   T_incub <- args$incubation_period(n)
@@ -111,16 +100,7 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
   tier <- sample.int(risk$n_levels, size = n, replace = TRUE, prob = risk$case_weights)
   traced <- as.logical(rbinom(n, 1, pmin(trace_cov_0 * risk$trace_prob[tier], 1)))
 
-  ## 4. Isolation: traced, symptomatic cases isolate with probability
-  ## prob_isolate_given_traced, starting a delay after their symptom onset.
-  isolated <- traced & symptomatic &
-    as.logical(rbinom(n, 1, p_iso_given_traced))
-  T_iso <- rep(NA_real_, n)
-  if (any(isolated)) {
-    T_iso[isolated] <- T_incub[isolated] + onset_to_isolation(sum(isolated))
-  }
-
-  ## 5. Would-be community outcome (death/recovery, ignoring hospitalisation).
+  ## 4. Would-be community outcome (death/recovery, ignoring hospitalisation).
   would_die_comm <- symptomatic & as.logical(rbinom(n, 1, args$prob_death_comm))
 
   T_comm_out <- T_incub
@@ -133,7 +113,7 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
       args$onset_to_recovery(sum(!would_die_comm))
   }
 
-  ## 6. Potential hospitalisation. Traced cases may be admitted more often and
+  ## 5. Potential hospitalisation. Traced cases may be admitted more often and
   ## sooner (both multipliers default to 1, i.e. no effect).
   p_hosp_i <- rep(prob_hosp_g, n)
   p_hosp_i[traced] <- pmin(prob_hosp_g * hosp_mult_traced, 1)
@@ -141,15 +121,19 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
 
   T_hosp <- rep(NA_real_, n)
   if (any(potentially_hosp)) {
-    delay_mult <- ifelse(traced[potentially_hosp], hdf * hdf_traced, hdf)
-    T_hosp[potentially_hosp] <- T_incub[potentially_hosp] +
-      args$onset_to_hospitalisation(sum(potentially_hosp)) * delay_mult
+    own_delay <- args$onset_to_hospitalisation(sum(potentially_hosp)) * hdf
+    ## Tracing caps the onset-to-admission delay rather than replacing it.
+    if (!is.null(traced_delay)) {
+      is_traced <- traced[potentially_hosp]
+      own_delay[is_traced] <- pmin(own_delay[is_traced], traced_delay)
+    }
+    T_hosp[potentially_hosp] <- T_incub[potentially_hosp] + own_delay
   }
 
-  ## 7. Realised hospitalisation: admission must beat the community outcome
+  ## 6. Realised hospitalisation: admission must beat the community outcome
   realised_hosp <- potentially_hosp & !is.na(T_hosp) & (T_hosp < T_comm_out)
 
-  ## 8. Outcome status & time
+  ## 7. Outcome status & time
   second_chance_death <- if (args$prob_death_comm > 0) {
     args$prob_death_hosp / args$prob_death_comm
   } else 0
@@ -171,27 +155,24 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
     T_out[idx] <- T_hosp[idx] + args$hospitalisation_to_recovery(length(idx))
   }
 
-  ## 9. Generation-time mass fractions. Infection times are drawn from a Gamma
-  ## truncated to [0, T_out], so the mass in a window [a, b] is
-  ## (F(b) - F(a)) / F(T_out).
+  ## 8. Generation-time mass fractions. Contact times are drawn from a Gamma truncated
+  ## to [lower, T_out], so the share of a case's transmission in a window [a, b] is
+  ## (F(b) - F(a)) / (F(T_out) - F(lower)). The lower bound is the parent's infection
+  ## (0) normally, and their symptom onset when presymptomatic transmission is off --
+  ## which concentrates the remaining mass later and so raises Q_g.
+  presympt <- args$presymptomatic_transmission
+  if (is.null(presympt)) presympt <- TRUE
   gt_cdf <- function(x) pgamma(x, shape = args$Tg_shape_genPop, rate = args$Tg_rate_genPop)
-  F_out  <- gt_cdf(T_out)
-  valid  <- F_out > .Machine$double.eps
+  F_out   <- gt_cdf(T_out)
+  F_lower <- if (isTRUE(presympt)) 0 else gt_cdf(T_incub)
+  F_total <- F_out - F_lower
+  valid   <- F_total > .Machine$double.eps
 
   ## Post-admission mass (hospital quarantine acts here)
   q_h <- numeric(n)
   sel <- realised_hosp & valid
   if (any(sel)) {
-    q_h[sel] <- (F_out[sel] - gt_cdf(T_hosp[sel])) / F_out[sel]
-  }
-
-  ## Isolation-to-admission mass (isolation acts here). For cases never admitted
-  ## the window runs to their outcome instead.
-  q_iso <- numeric(n)
-  sel <- isolated & valid
-  if (any(sel)) {
-    iso_end <- ifelse(realised_hosp[sel], T_hosp[sel], T_out[sel])
-    q_iso[sel] <- pmax(0, (gt_cdf(iso_end) - gt_cdf(T_iso[sel])) / F_out[sel])
+    q_h[sel] <- (F_out[sel] - gt_cdf(T_hosp[sel])) / F_total[sel]
   }
 
   prop_etu_0 <- .at_t0(args$prop_etu)
@@ -203,10 +184,8 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
 
   list(
     Q_g             = mean(q_h),
-    Q_iso           = mean(q_iso),
     p_realised_hosp = mean(realised_hosp),
     p_traced        = mean(traced),
-    p_isolated      = mean(isolated),
     p_die_comm      = mean(outcome_death & !realised_hosp),
     p_die_hosp      = mean(outcome_death &  realised_hosp),
     prop_etu_0      = prop_etu_0,
@@ -218,27 +197,23 @@ compute_r0_invariants <- function(args, n = 50000, seed = NULL) {
 #' Direct-transmission multiplier D
 #'
 #' The fraction of a genPop case's would-be transmission that survives the
-#' pre-admission isolation and post-admission quarantine layers:
-#' \deqn{D = 1 - hq(0) \, Q_g - \mathrm{isolation\_efficacy} \, Q_{iso}}
-#' The two windows are disjoint, so the terms are additive. PPE does not enter:
+#' post-admission quarantine layer:
+#' \deqn{D = 1 - hq(0) \, Q_g}
+#' PPE does not enter:
 #' it only thins HCW recipients, and this is the genPop-dominant single-type
 #' approximation.
 #'
 #' @param inv Invariants from \code{\link{compute_r0_invariants}}.
 #' @param etu_efficacy,general_hospital_quarantine_efficacy Fixed scalar
 #'   post-admission quarantine efficacies.
-#' @param isolation_efficacy Fixed scalar efficacy of pre-admission isolation.
-#'   Defaults to 0.
 #' @return A single numeric multiplier.
 #' @export
 r0_direct_multiplier <- function(inv,
                                  etu_efficacy,
-                                 general_hospital_quarantine_efficacy,
-                                 isolation_efficacy = 0) {
+                                 general_hospital_quarantine_efficacy) {
   hq0 <- .hq_eff0_from_parts(inv$prop_etu_0, etu_efficacy,
                              general_hospital_quarantine_efficacy)
-  iso_mass <- if (is.null(inv$Q_iso)) 0 else inv$Q_iso
-  1 - hq0 * inv$Q_g - isolation_efficacy * iso_mass
+  1 - hq0 * inv$Q_g
 }
 
 #' Funeral-transmission multiplier F
@@ -274,9 +249,8 @@ approx_r0 <- function(args, n = 50000, seed = NULL, invariants = NULL) {
 
   inv <- if (is.null(invariants)) compute_r0_invariants(args, n = n, seed = seed) else invariants
 
-  iso_eff <- if (is.null(args$isolation_efficacy)) 0 else args$isolation_efficacy
   D <- r0_direct_multiplier(inv, args$etu_efficacy,
-                            args$general_hospital_quarantine_efficacy, iso_eff)
+                            args$general_hospital_quarantine_efficacy)
   F_fun <- r0_funeral_multiplier(inv, args$safe_funeral_efficacy)
 
   risk_g <- as_contact_risk(args$contact_risk_genPop,  args$contact_risk, "contact_risk_genPop")
@@ -380,9 +354,8 @@ solve_baseline_risk_for_r0 <- function(R0,
 
   inv <- if (is.null(invariants)) compute_r0_invariants(args, n = n, seed = seed) else invariants
 
-  iso_eff <- if (is.null(args$isolation_efficacy)) 0 else args$isolation_efficacy
   D <- r0_direct_multiplier(inv, args$etu_efficacy,
-                            args$general_hospital_quarantine_efficacy, iso_eff)
+                            args$general_hospital_quarantine_efficacy)
   F_fun <- r0_funeral_multiplier(inv, args$safe_funeral_efficacy)
 
   risk_g <- as_contact_risk(args$contact_risk_genPop,  args$contact_risk, "contact_risk_genPop")

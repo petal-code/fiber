@@ -15,9 +15,8 @@ compute_r0_invariants(args, n = 50000, seed = NULL)
 \item{seed}{Optional integer seed.}
 }
 \value{
-A named list of invariants: \code{Q_g}, \code{Q_iso},
-\code{p_realised_hosp}, \code{p_traced}, \code{p_isolated},
-\code{p_die_comm}, \code{p_die_hosp}, and the resolved \code{t = 0} inputs
+A named list of invariants: \code{Q_g}, \code{p_realised_hosp},
+\code{p_traced}, \code{p_die_comm}, \code{p_die_hosp}, and the resolved \code{t = 0} inputs
 \code{prop_etu_0}, \code{p_uf_cgp_0}, \code{p_uf_hgp_0}.
 }
 \description{
@@ -25,25 +24,20 @@ Monte-Carlo simulation of a genPop case's natural history at \code{t = 0},
 mirroring \code{\link{complete_offspring_info}}, to obtain the generation-time
 mass fractions that the intervention efficacies act on. None of the returned
 quantities depend on the conditional efficacies (ETU, general hospital,
-isolation, safe burial), so they can be cached per scenario and reused across
+safe burial), so they can be cached per scenario and reused across
 every particle of a calibration.
 }
 \details{
-Two generation-time mass fractions are computed:
-\describe{
-\item{\code{Q_g}}{the expected fraction of a case's generation-time mass
-falling \emph{after} hospital admission, which hospital quarantine acts on.}
-\item{\code{Q_iso}}{the expected fraction falling between isolation onset and
-admission (or, for cases never admitted, between isolation onset and their
-outcome), which isolation acts on.}
-}
-The two windows are disjoint by construction -- isolation runs up to admission
-and quarantine takes over from admission -- so their effects on the direct
-multiplier are additive with no double counting.
+\code{Q_g} is the expected fraction of a case's generation-time mass falling
+\emph{after} hospital admission, which is what hospital quarantine acts on.
 
-Whether a case is isolated depends on whether it was traced, which depends on
-the risk tier of the contact that infected it. Cases over-represent high-risk
-tiers, so the tier is drawn from the structure's \code{case_weights} (which are
-proportional to \code{fractions * relative_risk}) rather than from the raw
-contact fractions.
+Contact tracing enters through admission timing: a traced case is admitted a flat
+\code{onset_to_hospitalisation_traced} days after onset (capping its own delay), and
+may be admitted more often. Both raise \code{Q_g}, since more of the case's
+generation-time mass falls after admission where quarantine can act on it.
+
+Whether a case is traced depends on the risk tier of the contact that infected it.
+Cases over-represent high-risk tiers, so the tier is drawn from the structure's
+\code{case_weights} (which are proportional to \code{fractions * relative_risk})
+rather than from the raw contact fractions.
 }

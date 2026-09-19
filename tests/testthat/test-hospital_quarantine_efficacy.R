@@ -188,6 +188,7 @@ test_that("branching_process_main errors when derived inputs are incomplete", {
       prob_hcw_cond_funeral_hcw     = 0.3,
       prob_hcw_cond_funeral_genPop  = 0.1,
       population                    = 1000,
+      check_presymptomatic = FALSE,
       check_final_size              = 50,
       seeding_cases                 = 1,
       seed                          = 1

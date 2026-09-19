@@ -14,7 +14,7 @@ offspring_function_hcw(
   Tg_rate_hcw = NULL,
   prob_hospital_cond_hcw_preAdm = NULL,
   trace_coverage = 0,
-  isolation_efficacy = 0,
+  presymptomatic_transmission = TRUE,
   ppe_coverage_hcw = NULL,
   ppe_efficacy = NULL,
   prop_etu = NULL,
@@ -34,8 +34,8 @@ offspring_function_hcw(
 )
 }
 \arguments{
-\item{parent_info}{One-row data.frame/list containing parent infection, hospitalisation,
-isolation and outcome times.}
+\item{parent_info}{One-row data.frame/list containing parent infection, incubation,
+hospitalisation and outcome times.}
 
 \item{mn_contacts_hcw}{Positive numeric or function(t). Mean of the Negative Binomial
 contact distribution for HCW parents, resolved at the parent's absolute infection time.}
@@ -59,8 +59,9 @@ pre-admission contact occurs in the hospital setting while the HCW is working.}
 \item{trace_coverage}{Numeric in \code{[0,1]} or function(t). Programme-level contact
 tracing coverage, multiplying each tier's \code{trace_prob}.}
 
-\item{isolation_efficacy}{Numeric in \code{[0,1]} (fixed scalar). Reduction in
-pre-admission transmission once an isolated parent has entered isolation.}
+\item{presymptomatic_transmission}{Logical scalar. \code{TRUE} (default) lets contacts occur
+before the parent's symptom onset; \code{FALSE} truncates contact times to start at the end
+of the parent's incubation period.}
 
 \item{ppe_coverage_hcw}{Numeric in \code{[0,1]} or function(t). Coverage: probability that
 an HCW (source or receiver) has PPE. Each PPE layer thins by
@@ -110,18 +111,18 @@ parent's own admission are always in the hospital. Each contact is assigned a cl
 transmits with probability \code{baseline_risk_hcw(t) * relative_risk[tier]} resolved at
 that contact's own calendar time.
 
-Contacts that transmit are thinned by four multiplicatively-combined protective layers,
+Contacts that transmit are thinned by three multiplicatively-combined protective layers,
 each applied only where relevant:
 \itemize{
-\item \strong{Isolation}: all pre-admission events (community \emph{and} workplace) at or after
-the parent's isolation time -- an isolated HCW has withdrawn from work as well as
-from the community.
 \item \strong{Source PPE} worn by the still-working HCW parent: all pre-admission hospital
 events, any recipient class.
 \item \strong{Receiver PPE} worn by HCW recipients: all hospital events with an HCW
 recipient, pre- or post-admission.
 \item \strong{Hospital quarantine}: all post-admission hospital events.
 }
+
+Setting \code{presymptomatic_transmission = FALSE} truncates contact times to start at the
+end of the parent's incubation period; see \code{\link{offspring_function_genPop}}.
 
 Every contact is independently marked as traced, with probability
 \code{trace_coverage(t) * trace_prob[tier]}; traced status travels with contacts that
