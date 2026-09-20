@@ -52,3 +52,6 @@ rsconnect/
 
 # Sweep outputs (regenerate with inst/examples/tracing_tier_sweep.R)
 inst/examples/*.rds
+inst/appendix/*.aux
+inst/appendix/*.log
+inst/appendix/*.out
